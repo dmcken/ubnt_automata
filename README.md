@@ -9,3 +9,11 @@ Automate the interfaces of various Ubiquiti products.
 - EdgeSwitch - Planned
 - EdgePower - Planned
 - Camera / Door Access - Planned
+
+
+## Install
+
+See [INSTALL](INSTALL.md)
+
+
+## Examples
