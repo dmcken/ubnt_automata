@@ -50,7 +50,7 @@ class AirOSv8:
         final_url += f"{self._host}/{path}"
         return final_url
 
-    def login_http(self, password:str, username:str='ubnt'):
+    def login_http(self, password: str, username: str='ubnt') -> None:
         '''Login to device via HTTP(s).
 
         '''
@@ -94,7 +94,7 @@ class AirOSv8:
             ))
             raise
 
-    def change_password(self, new_pw, old_pw=None):
+    def change_password(self, new_pw: str, old_pw: str=None) -> None:
         '''Change current user password.
         '''
 
