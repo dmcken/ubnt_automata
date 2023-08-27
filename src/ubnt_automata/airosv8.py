@@ -2,14 +2,15 @@
 '''
 
 # System imports
+import http.client
 import json
 import logging
 import sys
 import traceback
-import urllib3
 
 # External imports
 import requests
+import urllib3
 
 # Local imports
 from . import exceptions
@@ -212,8 +213,21 @@ class AirOSv8:
         # Something went wrong.
         raise RuntimeError(f"Error fetching status: {res.text}")
 
+    def enable_debug(self) -> None:
+        '''Enable debugging'''
+        http.client.HTTPConnection.debuglevel = 1
+        requests_log = logging.getLogger("requests.packages.urllib3")
+        requests_log.setLevel(logging.DEBUG)
+        requests_log.propagate = True
+
+    def disable_debug(self) -> None:
+        '''Disable debugging'''
+        http.client.HTTPConnection.debuglevel = 0
+        requests_log = logging.getLogger("requests.packages.urllib3")
+        requests_log.setLevel(logging.WARNING)
+        requests_log.propagate = False
+
 if __name__ == '__main__':
-    import http.client
     import pprint
 
-    http.client.HTTPConnection.debuglevel = 1
+
