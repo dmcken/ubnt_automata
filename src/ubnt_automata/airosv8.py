@@ -45,7 +45,11 @@ class AirOSv8:
             self.login_http(self._password)
 
     def _build_url(self, path: str):
-        '''Build the final URL to pass to request library'''
+        '''Build the final URL to pass to request library.
+
+        Args:
+            - path: the path
+        '''
         final_url = f"{'https' if self._is_ssl else 'http'}://"
         final_url += f"{self._host}/{path}"
         return final_url
@@ -204,8 +208,9 @@ class AirOSv8:
 
         if res.status_code == 200:
             return res.json()
-        else:
-            raise RuntimeError(f"Error fetching status: {res.text}")
+
+        # Something went wrong.
+        raise RuntimeError(f"Error fetching status: {res.text}")
 
 if __name__ == '__main__':
     import http.client
