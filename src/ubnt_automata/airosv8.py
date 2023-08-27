@@ -46,11 +46,9 @@ class AirOSv8:
 
     def _build_url(self, path: str):
         '''Build the final URL to pass to request library'''
-        return "{0}://{1}/{2}".format(
-            "https" if self._is_ssl else "http",
-            self._host,
-            path,
-        )
+        final_url = f"{'https' if self._is_ssl else 'http'}://"
+        final_url += f"{self._host}/{path}"
+        return final_url
 
     def login_http(self, password:str, username:str='ubnt'):
         '''Login to device via HTTP(s).
@@ -65,9 +63,10 @@ class AirOSv8:
             # Get cookies
             self._req_session.get(
                 self._build_url(''),
-                verify=False
+                verify=False,
             )
 
+            # Login
             rez = self._req_session.post(
                 self._build_url("api/auth"),
                 data=auth_data,
@@ -95,7 +94,7 @@ class AirOSv8:
             ))
             raise
 
-    def change_password(self, new_pw, old_pw=None, username = 'ubnt'):
+    def change_password(self, new_pw, old_pw=None):
         '''Change current user password.
         '''
 
