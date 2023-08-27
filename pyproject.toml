@@ -57,15 +57,15 @@ license = {file = "LICENSE.txt"}
 # authored the project, and a valid email address corresponding to the name
 # listed.
 authors = [
-  {name = "David M.", email = "" } # Optional
+  {name = "David M.", email = "dontemailme@example.com" } # Optional
 ]
 
 # This should be your name or the names of the organization who currently
 # maintains the project, and a valid email address corresponding to the name
 # listed.
-maintainers = [
-  {name = "David M.", email = "" } # Optional
-]
+#maintainers = [
+#  {name = "David M.", email = "" } # Optional
+#]
 
 # Classifiers help users find your project by categorizing it.
 #
@@ -103,7 +103,8 @@ classifiers = [  # Optional
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [ # Optional
-  "peppercorn"
+  "requests",
+  "paramiko",
 ]
 
 # List additional groups of dependencies here (e.g. development
