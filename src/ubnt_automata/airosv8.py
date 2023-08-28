@@ -5,6 +5,7 @@
 import http.client
 import json
 import logging
+import pprint
 import sys
 import traceback
 
@@ -169,11 +170,11 @@ class AirOSv8:
         for k,val in cfgdata.items():
             lines.append(f"{k}={val}")
 
-        pprint.pprint(lines)
+        logger.debug(f"Writecfg lines: {pprint.pformat(lines)}")
 
         cfg_output = "\r\n".join(lines)
 
-        print(cfg_output)
+        logger.debug(f"cfgoutput: \n{cfg_output}")
 
         cfg_data = {
             'cfgData': cfg_output,
@@ -226,8 +227,3 @@ class AirOSv8:
         requests_log = logging.getLogger("requests.packages.urllib3")
         requests_log.setLevel(logging.WARNING)
         requests_log.propagate = False
-
-if __name__ == '__main__':
-    import pprint
-
-
