@@ -89,6 +89,8 @@ class AirOSv8:
             self._csrf_id = rez.headers['X-CSRF-ID']
         except exceptions.WrongPassword:
             raise
+        except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout) as exc:
+            raise exceptions.DeviceUnavailable from exc
         except Exception as exc:
             logger.debug(
                 f"An exception occurred 'login_http' - {self._host}: " +
