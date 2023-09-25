@@ -35,12 +35,20 @@ class AirOSCommonDevice:
         self._curr_password = None  # Once we login successfully will contain the current password
         self._is_ssl = None
 
-    def login(self, passwords: list[str], auto_apply: bool = False):
+    def login(self, passwords: list[str], username: str = None, auto_apply: bool = False):
         '''Login to the device.
         '''
+        if username is None:
+            self._curr_username = self._default_user
+        else:
+            self._curr_username = username
+
         try:
             primary_pw = passwords[0]
-            self.login_http(primary_pw)
+            self.login_http(
+                curr_pw=primary_pw,
+                curr_user=self._curr_username,
+            )
         except exceptions.WrongPassword as exc:
             logger.debug(f"Primary password '{primary_pw}' failed")
             alternate_pws = passwords[1:]
@@ -48,7 +56,10 @@ class AirOSCommonDevice:
             for curr_pw in alternate_pws:
                 try:
                     logger.debug(f"Trying: {curr_pw}")
-                    self.login_http(curr_pw)
+                    self.login_http(
+                        curr_pw=curr_pw,
+                        curr_user=self._curr_username,
+                    )
                     self.change_password(primary_pw)
                     if auto_apply:
                         self.apply_changes()
@@ -73,7 +84,7 @@ class AirOSCommonDevice:
         return utils.parse_ubnt_version_string(version_string=version_string)
 
     @abc.abstractmethod
-    def login_http(self, curr_pw, curr_user = None):
+    def login_http(self, curr_pw:str, curr_user:str = None):
         '''Login to device via HTTP.
         '''
 
