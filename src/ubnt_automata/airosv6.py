@@ -177,11 +177,11 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
         '''
         for curr_header in [x for x in headers if x[0] == 'set-cookie']:
             # currHeader[0] is 'set-cookie', currHeader[1] is the data.
-            cookieSections = curr_header[1].split(';')
-            for currSection in cookieSections:
+            cookie_sections = curr_header[1].split(';')
+            for curr_section in cookie_sections:
                 try:
-                    cookieName, cookieValue = currSection.split('=', 1)
-                    self._http_conn['cookieJar'][cookieName] = cookieValue
+                    cookie_name, cookie_value = curr_section.split('=', 1)
+                    self._http_conn['cookieJar'][cookie_name] = cookie_value
                 except ValueError:
                     pass
 
@@ -485,13 +485,13 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
 
             key_breakdown = key.split('.')
 
-            dictPtr = config_dict_breakdown
-            for currKeyPart in key_breakdown:
-                if currKeyPart not in dictPtr:
-                    dictPtr[currKeyPart] = {}
-                dictPtr = dictPtr[currKeyPart]
+            dict_ptr = config_dict_breakdown
+            for curr_key_part in key_breakdown:
+                if curr_key_part not in dict_ptr:
+                    dict_ptr[curr_key_part] = {}
+                dict_ptr = dict_ptr[curr_key_part]
 
-            dictPtr[currKeyPart] = value
+            dict_ptr[curr_key_part] = value
 
         if multi_layer:
             # logging.debug(pprint.pformat(config_dict_breakdown))
@@ -507,14 +507,14 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
             self._http_conn['connection'].request(reqtype, path, headers = headers)
             response = self._http_conn['connection'].getresponse()
 
-            resData = response.read()
-            headerData = response.getheaders()
+            res_data = response.read()
+            header_data = response.getheaders()
 
-            return (response.status, response.reason, headerData, resData)
+            return (response.status, response.reason, header_data, res_data)
         except http.client.BadStatusLine:
             if retries == 0:
                 raise
-            if self._is_ssl == False:
+            if self._is_ssl is False:
                 self._http_conn['connection'] = http.client.HTTPConnection(self._mgmt_ip, 80, timeout = 30)
             else:
                 try:
@@ -529,21 +529,21 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
             # Normally a bad thing but should only happen once.
             return self._make_request(reqtype, path, headers, body, (retries - 1))
 
-    def _parseINI(self, iniStr):
+    def _parse_ini(self, ini_str):
         '''Parse an .ini file.
         '''
 
-        iniData = {}
-        for currLine in [sm.strip() for sm in iniStr.split('\n')]:
-            if currLine == '':
+        ini_data = {}
+        for curr_line in [sm.strip() for sm in ini_str.split('\n')]:
+            if curr_line == '':
                 continue
 
-            name, value = currLine.split('=', 1)
-            iniData[name] = value
+            name, value = curr_line.split('=', 1)
+            ini_data[name] = value
 
-        return iniData
+        return ini_data
 
-    def fetchSiteSurvey(self, wait_time = 1):
+    def fetch_site_survey(self, wait_time = 1):
         '''
         Fetch the site survery page:
 
@@ -592,7 +592,9 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
 
         return final_list
 
-    def changeParameterHTTP(self, parameter, value, page):
+    def change_parameter_http(self, parameter, value, page):
+        '''Change parameter via HTTP.
+        '''
 
         form = utils.MultiPartForm()
         if value is not None:
@@ -617,7 +619,7 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
                                              body = str(form),
                                              headers = headers)
         response = self._http_conn['connection'].getresponse()
-        htmlData = response.read()
+        html_data = response.read()
         # self._httpConn['connection'].close()
 
         '''
@@ -628,7 +630,7 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
 
         return
 
-    def changeParameterSSH(self, parameters, auto_apply = False, ignoreUnknown = False):
+    def change_parameter_ssh(self, parameters, auto_apply = False, ignore_unknown = False):
         '''
         parameters - a dictionary of config keys and the values desired.
         autoApply - should we automatically apply / reboot if changes are made.
@@ -641,7 +643,7 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
 
         for curr_key in list(parameters.keys()):
             if curr_key not in list(config.keys()):
-                if ignoreUnknown:
+                if ignore_unknown:
                     continue
                 else:
                     additions[curr_key] = parameters[curr_key]
@@ -660,10 +662,14 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
             return False
 
         if changes:
-            logger.debug("SSH parameters changed: {0}".format(pprint.pformat(changes)))
+            logger.debug(
+                "SSH parameters changed: {0}".format(
+                    pprint.pformat(changes)
+                )
+            )
             sed_strings = []
-            for k,v in changes.items():
-                sed_strings.append("s/{0}={1}/{0}={2}/g".format(k, v['from'], v['to']))
+            for k,val in changes.items():
+                sed_strings.append("s/{0}={1}/{0}={2}/g".format(k, val['from'], val['to']))
 
             #sedStrings = map(lambda (k, v): u"s/{0}={1}/{0}={2}/g".format(k, v['from'], v['to']),
             #                changes.iteritems())
@@ -677,12 +683,25 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
             _ = self._ssh_conn.run(replace_command)
 
         if removals:
-            logger.debug(f"SSH parameters removed: {0}".format(pprint.pformat(removals)))
+            logger.debug(
+                f"SSH parameters removed: {0}".format(
+                    pprint.pformat(removals)
+                )
+            )
             for key in list(removals.keys()):
-                self._ssh_conn.run(['sed', '-i', '/^{0}/d'.format(key), '/tmp/system.cfg'])
+                self._ssh_conn.run([
+                    'sed',
+                    '-i',
+                    '/^{0}/d'.format(key),
+                    '/tmp/system.cfg'
+                ])
 
         if additions:
-            logger.debug(f"SSH parameters added: {0}".format(pprint.pformat(additions)))
+            logger.debug(
+                f"SSH parameters added: {0}".format(
+                    pprint.pformat(additions)
+                )
+            )
             for key, value in additions.items():
                 self._ssh_conn.run([
                     'sed',
@@ -932,7 +951,7 @@ class UbntSM(UbntDevice):
             '/getboardinfo.sh',
             headers = headers
         )
-        board_data = self._parseINI(board_str)
+        board_data = self._parse_ini(board_str)
 
         return_data['hardware_type'] = board_data['board.name']
         return_data['hw_addr']       = board_data['board.hwaddr']
@@ -943,7 +962,7 @@ class UbntSM(UbntDevice):
             '/getcfg.sh?.',
             headers = headers
         )
-        cfg_data = self._parseINI(cfg_str)
+        cfg_data = self._parse_ini(cfg_str)
 
         if return_data['smmode'] == 'bridge':
             for k, val in cfg_data.items():
@@ -1025,7 +1044,7 @@ class UbntAP(UbntDevice):
             'wireless.1.mac_acl.status': 'enabled',
             'wireless.1.mac_acl.policy': mode,
         }
-        rez = self.changeParameterSSH(sm_params, auto_apply = False)
+        rez = self.change_parameter_ssh(sm_params, auto_apply = False)
         return rez
 
     def MacACLDisable(self):
@@ -1037,7 +1056,7 @@ class UbntAP(UbntDevice):
         sm_params = {
             'wireless.1.mac_acl.status': 'disabled',
         }
-        rez = self.changeParameterSSH(sm_params, auto_apply = False)
+        rez = self.change_parameter_ssh(sm_params, auto_apply = False)
         return rez
 
     def MacACLListSM(self):
@@ -1109,7 +1128,7 @@ class UbntAP(UbntDevice):
             f'wireless.1.mac_acl.{next_free}.mac'     : mac_colon,
             f'wireless.1.mac_acl.{next_free}.comment' : reason,
         }
-        rez = self.changeParameterSSH(sm_params, auto_apply = False)
+        rez = self.change_parameter_ssh(sm_params, auto_apply = False)
         return rez
 
     def MacACLDelSM(self, mac):
@@ -1140,7 +1159,7 @@ class UbntAP(UbntDevice):
             f'wireless.1.mac_acl.{mac_found}.mac'     : None,
             f'wireless.1.mac_acl.{mac_found}.comment' : None,
         }
-        rez = self.changeParameterSSH(sm_params, auto_apply = False)
+        rez = self.change_parameter_ssh(sm_params, auto_apply = False)
         return rez
 
 class AirOSv6(UbntDevice):
