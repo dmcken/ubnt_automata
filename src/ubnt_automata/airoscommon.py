@@ -8,6 +8,7 @@ import logging
 
 # Local imports
 from . import exceptions
+from . import utils
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,16 @@ class AirOSCommonDevice:
                 raise exceptions.WrongPassword(
                     f"Device {self._mgmt_ip} does not have a known password".format()
                 ) from exc
+
+    def _determine_ssl(self,) -> bool:
+        '''Determine if the management interface has SSL enforced.
+        '''
+        return utils.determine_ssl(self._mgmt_ip)
+
+    def _parse_version_string(self, version_string):
+        '''Parse the version string.
+        '''
+        return utils.parse_ubnt_version_string(version_string=version_string)
 
     @abc.abstractmethod
     def login_http(self, curr_pw, curr_user = None):
