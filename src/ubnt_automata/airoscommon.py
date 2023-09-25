@@ -31,6 +31,10 @@ class AirOSCommonDevice:
         else:
             self._timeout = self._default_timeout
 
+        self._curr_username = None
+        self._curr_password = None  # Once we login successfully will contain the current password
+        self._is_ssl = None
+
     def login(self, passwords: list[str], auto_apply: bool = False):
         '''Login to the device.
         '''
