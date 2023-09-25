@@ -16,7 +16,7 @@ Unix:
 ```
 git clone https://github.com/dmcken/ubnt_automata.git
 cd <git root dir>
-python -m pip install --upgrade build
+python3 -m pip install --upgrade .
 ```
 
 ### Git
