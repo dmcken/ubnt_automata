@@ -16,6 +16,7 @@ import urllib3
 # Local imports
 from . import exceptions
 
+
 logger = logging.getLogger(__name__)
 
 # Disable the self signed certificate warnings.
@@ -32,6 +33,22 @@ class AirOSv8:
     - /chanlist_active.cfg
     - /survey.json.cgi?iface=ath0&update=last - Site survey
     - /amdata.cgi
+
+
+    To implement:
+    loginSSH
+    changePassword
+    applyChanges
+    discardChanges
+    reboot
+    fetchState
+    fetchConfig
+    fetchConfigHTTP
+    fetchConfigSSH
+    fetchSiteSurvey
+    changeParameterHTTP
+    changeParameterSSH
+    upgradeDevice
     '''
 
     def __init__(self, host: str, password: str, username: str='ubnt',
