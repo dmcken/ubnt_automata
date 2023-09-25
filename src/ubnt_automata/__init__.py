@@ -7,6 +7,11 @@ from . import exceptions
 
 # Classes
 from .airosv8 import AirOSv8
+from .airosv6 import AirOSv6
 
 
-__all__ = ['AirOSv8','exceptions']
+__all__ = [
+    'AirOSv6',
+    'AirOSv8',
+    'exceptions',
+]
