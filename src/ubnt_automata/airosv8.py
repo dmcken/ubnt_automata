@@ -51,11 +51,11 @@ class AirOSv8:
     upgradeDevice
     '''
 
-    def __init__(self, host: str, password: str, username: str='ubnt',
+    def __init__(self, mgmt_ip: str, password: str, username: str='ubnt',
                  autologin:bool=False) -> None:
         '''Constructor'''
         self._req_session = requests.Session()
-        self._host = host
+        self._mgmt_ip = mgmt_ip
         self._username = username
         self._password = password
         self._is_ssl = True
@@ -70,7 +70,7 @@ class AirOSv8:
             - path: the path
         '''
         final_url = f"{'https' if self._is_ssl else 'http'}://"
-        final_url += f"{self._host}/{path}"
+        final_url += f"{self._mgmt_ip}/{path}"
         return final_url
 
     def login_http(self, password: str, username: str='ubnt') -> None:
@@ -110,7 +110,7 @@ class AirOSv8:
             raise exceptions.DeviceUnavailable from exc
         except Exception as exc:
             logger.debug(
-                f"An exception occurred 'login_http' - {self._host}: " +
+                f"An exception occurred 'login_http' - {self._mgmt_ip}: " +
                 f"{exc.__class__} -> {exc}"
             )
             exc_type, exc_value, exc_traceback = sys.exc_info()
