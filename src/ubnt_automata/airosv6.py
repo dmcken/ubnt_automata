@@ -1,4 +1,4 @@
-'''Common classes / functions needed for handling Ubiquiti devices.
+'''Ubiquiti Common classes / functions needed for handling Ubiquiti devices.
 
 '''
 # System imports
