@@ -1,7 +1,9 @@
 '''Utility functions'''
 
 # System imports
+import dataclasses
 import itertools
+import logging
 import mimetypes
 import random
 import re
@@ -10,18 +12,77 @@ import sys
 import urllib
 import urllib3
 
+from urllib.parse import urlparse
+
 # External imports
 import requests
 
 # Local imports
 from . import exceptions
 
-def determine_device_type(management_ip: str):
+# Disable the self signed certificate warnings.
+urllib3.disable_warnings()
+
+logger = logging.getLogger(__name__)
+
+# Data classes
+@dataclasses.dataclass
+class UbntDeviceInfo:
+    '''Ubiquiti model device information.'''
+    # 0 - Unknown
+    # 6 - AirOSv6 style kit
+    # 8 - AirOSv8 style kit
+    model_group: int = 0
+    # Model name if known, empty string if not
+    model_name: str = ''
+    # Is SSL enabled on the web interface for this device.
+    web_ssl: bool = True
+
+
+
+def determine_device_type(management_ip: str) -> UbntDeviceInfo:
     '''Determine device type.
 
-    Connect
+    Connect to a CPE and determine as much information as possible.
+
+    Args:
+        - management_ip: str - IP address
     '''
-    # Requests the main page from management_ip
+
+    is_ssl = determine_ssl(management_ip)
+    if is_ssl:
+        base_url = 'https'
+    else:
+        base_url = 'http'
+
+    base_url += f"://{management_ip}"
+
+    api_url = f"{base_url}/api/info/public?include_langs=false&lang="
+
+    r_api = requests.get(
+        api_url,
+        timeout=10,
+        allow_redirects=True,
+        verify=False,
+    )
+
+    device_data = UbntDeviceInfo(web_ssl=is_ssl)
+
+    # If we get a valid JSON object
+    if r_api.headers['Content-Type'] == 'application/json; charset=utf-8':
+        # The json from an AirOSv8 device looks like this
+        # {"setup_complete":true,"ui_lang":"en_US","product_name":"LiteBeam 5AC"}
+        device_json = r_api.json()
+        device_data.model_name = device_json['product_name']
+        device_data.model_group = 8
+    elif urlparse(r_api.url).path[:10] == '/login.cgi':
+        # This is most likely an AirOSv6 device.
+        device_data.model_group = 6
+    else:
+        # We don't know, debug and handle any new devices
+        device_data.model_group = 0
+
+    return device_data
 
 def determine_ssl(management_ip: str) -> bool:
     '''Determine if the management interface has SSL enforced.
@@ -211,6 +272,7 @@ def detect_ubnt_version(management_ip: str) -> bool:
     except (urllib3.exceptions.NewConnectionError, requests.exceptions.ConnectionError) as exc:
         raise exceptions.DeviceUnavailable() from exc
     except exceptions.DeviceUnavailable:
+        logger.debug(f"Device '{management_ip}' is not reachable")
         raise
 
 class MultiPartForm(object):
