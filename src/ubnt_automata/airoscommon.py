@@ -1,7 +1,6 @@
 '''Base class for common functions for all Ubnt AirOS devices.
 '''
 
-
 # System imports
 import abc
 import logging
@@ -76,7 +75,8 @@ class AirOSCommonDevice:
     def _determine_ssl(self,) -> bool:
         '''Determine if the management interface has SSL enforced.
         '''
-        return utils.determine_ssl(self._mgmt_ip)
+        self._is_ssl = utils.determine_ssl(self._mgmt_ip)
+        return self._is_ssl
 
     def _parse_version_string(self, version_string):
         '''Parse the version string.
@@ -85,15 +85,12 @@ class AirOSCommonDevice:
 
     @abc.abstractmethod
     def login_http(self, curr_pw:str, curr_user:str = None):
-        '''Login to device via HTTP.
-        '''
+        '''Login to device via HTTP.'''
 
     @abc.abstractmethod
     def change_password(self, new_password):
-        '''Change password on device.
-        '''
+        '''Change password on device.'''
 
     @abc.abstractmethod
     def apply_changes(self, test_mode = False):
-        '''Apply changes to device.
-        '''
+        '''Apply changes to device.'''
