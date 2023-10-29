@@ -1162,16 +1162,244 @@ class UbntAP(UbntDevice):
         rez = self.change_parameter_ssh(sm_params, auto_apply = False)
         return rez
 
-class AirOSv6(UbntDevice):
+class AirOSv6(airoscommon.AirOSCommonDevice):
     '''Ubnt pre-version 8 equipment handler.
     '''
-    def __init__(self, managementIP, auto_login = True, auto_apply = True):
+    def __init__(self, management_ip: str, timeout: int = None):
         super().__init__(
-            managementIP,
-            auto_login=auto_login,
-            auto_apply=auto_apply,
+            management_ip=management_ip,
+            timeout=timeout,
         )
 
+        # Default values
+        self._http_conn = {}
+        self._ssh_conn = None
+        self._cookie_jar = None
+        self._session = requests.Session()
+
+    def _get_base_url(self, relative_path: str = '') -> str:
+        '''Build the base URL to request.
+        '''
+
+        # Detemine if this interface has SSL enforced.
+        if self._is_ssl is None:
+            self._determine_ssl()
+
+        if self._is_ssl is False:
+            access_scheme = 'http'
+        elif self._is_ssl is True:
+            access_scheme = 'https'
+        else:
+            raise RuntimeError("Reached login without determining SSL state")
+
+        base_url = f"{access_scheme}://{self._mgmt_ip}/{relative_path}"
+
+        return base_url
+
+    def _fetch_fields_page(self, page):
+        '''
+        Fetch the lists of fields.
+
+        '''
+
+        result = self._session.get(self._get_base_url(page))
+
+        soup = bs4.BeautifulSoup(result.text, "html.parser")
+
+        form = soup.find('form', action = page)
+
+        fields = {}
+
+        for curr_field in form.find_all('input'):
+            # print currField
+
+            try:
+                if curr_field['type'] in ['button', 'submit']:
+                    continue
+            except KeyError:
+                # If the type is missing, then it isn't a input I want.
+                continue
+
+            try:
+                curr_field['disabled']
+                continue
+            except KeyError:
+                pass
+
+            try:
+                value = curr_field['value']
+            except KeyError:
+                value = ''
+
+            if curr_field['type'] == 'checkbox':
+                # If you have a checkbox the value is
+                # only used if the box is checked
+                try:
+                    curr_field['checked']
+                except KeyError:
+                    value = ''
+
+            fields[curr_field['name']] = value
+
+        for curr_select in form.find_all('select'):
+            # print currSelect
+
+            selected = None
+            for curr_option in curr_select.find_all('option'):
+                try:
+                    curr_option['selected']
+                    selected = curr_option['value']
+                except KeyError:
+                    pass
+
+            if curr_select['name'] == 'timezone' and selected is None:
+                selected = 'GMT'
+
+            fields[curr_select['name']] = selected
+
+        # pprint.pprint(fields)
+
+        return fields
+
+    def login_http(self, curr_pw:str, curr_user:str = None):
+        '''Login to device via HTTP.
+
+        '''
+        logger.debug("AirOSv6::login_http")
+        try:
+            if curr_user is None:
+                curr_user = self._default_user
+
+            try:
+                # Session cookies get set here
+                response = self._session.get(
+                    self._get_base_url(),
+                    verify=False,
+                    timeout=self._timeout,
+                )
+            except http.client.ssl.SSLError as exc:
+                # Possible cases that I've seen:
+                # The handshake operation timed out
+                raise exceptions.DeviceUnavailable(
+                    f"SSL Errors: {exc.args}"
+                )
+            except socket.error as exc:
+                if exc.errno in [113]:
+                    raise exceptions.DeviceUnavailable(
+                        f"Unable to reach {self._mgmt_ip}"
+                    )
+                if exc.errno != errno.ECONNRESET:
+                    raise
+            except http.client.BadStatusLine as exc:
+                raise exceptions.DeviceUnavailable(
+                    "Error fetching data via HTTP connection"
+                ) from exc
+            except Exception as exc:
+                raise exceptions.DeviceUnavailable(
+                    "Connection reset by peer"
+                ) from exc
+
+            payload = {
+                'username': curr_user,
+                'password': curr_pw,
+            }
+            response = self._session.post(
+                self._get_base_url('login.cgi'),
+                data=payload,
+            )
+
+            result_parsed = urllib.parse.urlparse(response.url)
+            if result_parsed.path == "/login.cgi":
+                raise exceptions.WrongPassword(
+                    f"Password '{curr_pw}' doesn't work on '{self._mgmt_ip}'"
+                )
+
+            if result_parsed.path == "/index.cgi":
+                self._curr_password = curr_pw
+                return
+            else:
+                logger.error(f"Unknown state, got url: {response.url}")
+                raise RuntimeError(f"Unknown state, got url: {response.url}")
+        except exceptions.WrongPassword:
+            raise
+        except exceptions.DeviceUnavailable:
+            raise
+        except Exception as exc:
+            logger.debug(
+                f"An exception occurred 'login_http' - {self._mgmt_ip}: " +
+                f"{exc.__class__}, {exc}"
+            )
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            logger.debug(
+                repr(
+                    traceback.format_exception(
+                        exc_type,
+                        exc_value,
+                        exc_traceback
+                    )
+                )
+            )
+            raise
+
+    def change_password(self, new_password):
+        '''Change password on device.'''
+        logger.debug("AirOSv6::change_password")
+        try:
+            logger.debug(
+                f"Changing password on {self._mgmt_ip}: " +
+                f"{self._curr_password} -> {new_password}"
+            )
+
+            self._session.get(
+                self._get_base_url('system.cgi'),
+                timeout=30
+            )
+
+            fields = self._fetch_fields_page('system.cgi')
+
+            # logger.debug(f"Change password fields: {fields}")
+
+            field_data = {
+                'OldPassword':  (None, self._curr_password),
+                'NewPassword':  (None, new_password),
+                'NewPassword2': (None, new_password),
+                'change':       (None, 'Change'),
+            }
+
+            for field_name, field_value in list(fields.items()):
+                if field_name in ['OldPassword', 'NewPassword', 'NewPassword2']:
+                    continue
+                field_data[field_name] = (None, field_value)
+
+            result = self._session.post(
+                url = self._get_base_url('system.cgi'),
+                files = field_data,
+            )
+
+            html_data = result.text
+            # Test if there is a change to apply
+        except requests.exceptions.ConnectionError as exc:
+            raise exceptions.DeviceUnavailable from exc
+
+    def apply_changes(self, test_mode = False):
+        '''Apply any pending changes.
+
+        Test mode is also handled (after 120 seconds the change is rolled
+        back if not confirmed).
+
+        There is a way for this to not trigger a reboot for certain changes
+        (at least in XW.v6.3.6)
+        TODO: Investigate how to emulate that.
+        '''
+        logger.debug("AirOSv6::apply_changes")
+        if test_mode is True:
+            url = 'apply.cgi?testmode=on'
+        else:
+            url = 'apply.cgi?testmode='
+
+        self._session.get(self._get_base_url(url))
+
+        return
 
 if __name__ == '__main__':
     #import pprint
@@ -1184,5 +1412,4 @@ if __name__ == '__main__':
     logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
     logging.basicConfig(level = logging.DEBUG, format=BASIC_FORMAT)
     logging.info("Start")
-
 
