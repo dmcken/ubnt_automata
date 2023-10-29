@@ -14,6 +14,7 @@ import requests
 import urllib3
 
 # Local imports
+from . import airoscommon
 from . import exceptions
 
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 urllib3.disable_warnings()
 
 
-class AirOSv8:
+class AirOSv8(airoscommon.AirOSCommonDevice):
     '''Ubnt version 8 equipment handler.
 
 
@@ -51,17 +52,19 @@ class AirOSv8:
     upgradeDevice
     '''
 
-    def __init__(self, mgmt_ip: str, password: str, username: str='ubnt',
-                 autologin:bool=False) -> None:
+    def __init__(self, management_ip: str, timeout: int = None) -> None:
         '''Constructor'''
+        super().__init__(
+            management_ip=management_ip,
+            timeout=timeout,
+        )
         self._req_session = requests.Session()
-        self._mgmt_ip = mgmt_ip
-        self._username = username
-        self._password = password
-        self._is_ssl = True
-
-        if autologin:
-            self.login_http(self._password)
+        # self._mgmt_ip = mgmt_ip
+        # self._username = username
+        # self._password = password
+        # self._is_ssl = True
+        self._dev_info = None
+        self._csrf_id = None
 
     def _build_url(self, path: str):
         '''Build the final URL to pass to request library.
@@ -69,18 +72,21 @@ class AirOSv8:
         Args:
             - path: the path
         '''
+        if self._is_ssl is None:
+            self._determine_ssl()
+
         final_url = f"{'https' if self._is_ssl else 'http'}://"
         final_url += f"{self._mgmt_ip}/{path}"
         return final_url
 
-    def login_http(self, password: str, username: str='ubnt') -> None:
+    def login_http(self, curr_pw: str, curr_user:str = None) -> None:
         '''Login to device via HTTP(s).
 
         '''
         try:
             auth_data = {
-                'username': username,
-                'password': password,
+                'username': curr_user,
+                'password': curr_pw,
             }
 
             # Get cookies
@@ -101,7 +107,7 @@ class AirOSv8:
                 raise exceptions.WrongPassword()
 
             # Successful login
-            self._curr_password = password
+            self._curr_password = curr_pw
             self._dev_info = rez.json()['boardinfo']
             self._csrf_id = rez.headers['X-CSRF-ID']
         except exceptions.WrongPassword:
@@ -119,19 +125,16 @@ class AirOSv8:
             ))
             raise
 
-    def change_password(self, new_pw: str, old_pw: str=None) -> None:
+    def change_password(self, new_password: str) -> None:
         '''Change current user password.
         '''
 
-        if old_pw is None:
-            old_password = self._curr_password
-        else:
-            old_password = old_pw
+        old_password = self._curr_password
 
         pw_data = {
             'change': 'yes',
             'ro': '0',
-            'pwd': new_pw,
+            'pwd': new_password,
             'oldPwd': old_password,
         }
         rez = self._req_session.post(
@@ -156,6 +159,47 @@ class AirOSv8:
                 f"Error decoding json in change password: {rez.content}"
             )
 
+    def discard_changes(self):
+        '''
+        POST to /discard.cgi with "d=0&testmode=yes"
+
+        Response is JSON of:
+        {"ok":true,"fast_restart":true,"code":0}
+        '''
+
+    def apply_changes(self, test_mode = False):
+        '''Apply changes to device.
+
+        # Save Changes
+        GET to test_mode.cgi
+
+        Response of:
+        {"countdown_started":0,"time_left":0,"active":0}
+
+        # Actual test mode needs to be set in the writecfg
+
+        Response of:
+        {"countdown_started":0,"time_left":240,"active":1}
+        '''
+        rez = self._req_session.get(
+            self._build_url("test_mode.cgi"),
+            verify=False,
+            headers = {
+                'X-CSRF-ID': self._csrf_id,
+            }
+        )
+
+        try:
+            apply_result = rez.json()
+
+            if apply_result['active'] in [0,1]:
+                return
+
+            logger.error(f"Error apply changes: {apply_result}")
+        except json.decoder.JSONDecodeError:
+            logger.error(
+                f"Error decoding json in apply changes: {rez.content}"
+            )
 
     def getcfg(self):
         '''Get the device configuration.
@@ -184,6 +228,11 @@ class AirOSv8:
 
     def writecfg(self, cfgdata):
         '''Write config to device.
+
+        testmode: "yes" is to be set here.
+
+        Response is JSON:
+        {"ok":true,"fast_restart":true,"code":0}
         '''
         lines = []
         for k,val in cfgdata.items():
@@ -197,6 +246,7 @@ class AirOSv8:
 
         cfg_data = {
             'cfgData': cfg_output,
+            #'testmode': "yes"
         }
         rez = self._req_session.post(
             self._build_url("writecfg.cgi"),
