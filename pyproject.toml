@@ -17,7 +17,7 @@ name = "ubnt_automata"  # Required
 #
 # For a discussion on single-sourcing the version, see
 # https://packaging.python.org/guides/single-sourcing-package-version/
-version = "0.0.1"  # Required
+version = "0.0.3"  # Required
 
 # This is a one-line description or tagline of what your project does. This
 # corresponds to the "Summary" metadata field:
@@ -43,7 +43,7 @@ requires-python = ">=3.7"
 # This is either text indicating the license for the distribution, or a file
 # that contains the license
 # https://packaging.python.org/en/latest/specifications/core-metadata/#license
-license = {file = "LICENSE.txt"}
+license = {file = "LICENSE"}
 
 # This field adds keywords for your project which will appear on the
 # project page. What does your project relate to?
@@ -82,7 +82,7 @@ classifiers = [  # Optional
   # "Topic :: Software Development :: Build Tools",
 
   # Pick your license as you wish
-  "License :: OSI Approved :: GPL 3",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
 
   # Specify the Python versions you support here. In particular, ensure
   # that you indicate you support Python 3. These classifiers are *not*
@@ -149,7 +149,5 @@ sample = "sample:main"
 package-data = {"sample" = ["*.dat"]}
 
 [build-system]
-# These are the assumed default build requirements from pip:
-# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
-requires = ["setuptools>=43.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
