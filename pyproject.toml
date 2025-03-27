@@ -106,6 +106,7 @@ dependencies = [
   "beautifulsoup4",
   "requests",
   "paramiko",
+  "spur",
 ]
 
 # List additional groups of dependencies here (e.g. development
