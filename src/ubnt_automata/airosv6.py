@@ -104,6 +104,9 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
                         continue
 
                 # None of the passwords we know worked so can't do anything.
+                # This is not linked to any other exceptions
+                # pylint is just being stupid.
+                # pylint: disable=raise-missing-from
                 raise exceptions.WrongPassword(
                     f"Device '{self._mgmt_ip}' does not have a known password."
                 )
@@ -217,11 +220,8 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
                 # If the type is missing, then it isn't a input I want.
                 continue
 
-            try:
-                curr_field['disabled']
+            if 'disabled' in curr_field:
                 continue
-            except KeyError:
-                pass
 
             try:
                 value = curr_field['value']
@@ -313,9 +313,9 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
             if result_parsed.path == "/index.cgi":
                 self._curr_password = curr_pw
                 return
-            else:
-                logger.error(f"Unknown state, got url: {response.url}")
-                raise RuntimeError(f"Unknown state, got url: {response.url}")
+
+            logger.error(f"Unknown state, got url: {response.url}")
+            raise RuntimeError(f"Unknown state, got url: {response.url}")
         except exceptions.WrongPassword:
             raise
         except exceptions.DeviceUnavailable:
@@ -383,8 +383,6 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
 
         self._session.get(self._get_base_url(url))
 
-        return
-
     def reboot(self):
         '''Reboot the device.
 
@@ -418,8 +416,6 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
 
         logger.error(pprint.pformat(reboot_request.request))
 
-        return
-
     def discard_changes(self):
         '''Discard pending changes.
 
@@ -432,8 +428,6 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
         _ = response.read()
         self._http_conn['connection'].close()
 
-        return
-
     def fetch_config(self, sorted_string = False):
         '''Fetch config.
         '''
@@ -445,8 +439,8 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
                 config_str += f"{curr_key}={raw_config[curr_key]}\n"
 
             return config_str.strip()
-        else:
-            return raw_config
+
+        return raw_config
 
 
     def fetch_config_http(self):
@@ -496,9 +490,9 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
         if multi_layer:
             # logging.debug(pprint.pformat(config_dict_breakdown))
             return config_dict_breakdown
-        else:
-            # logging.debug(pprint.pformat(config_dict))
-            return config_dict
+
+        # logging.debug(pprint.pformat(config_dict))
+        return config_dict
 
     def _make_request(self, reqtype, path, headers, body = None, retries = 1):
         '''Make a request to the device.
@@ -515,15 +509,23 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
             if retries == 0:
                 raise
             if self._is_ssl is False:
-                self._http_conn['connection'] = http.client.HTTPConnection(self._mgmt_ip, 80, timeout = 30)
+                self._http_conn['connection'] = http.client.HTTPConnection(
+                    self._mgmt_ip,
+                    80,
+                    timeout = 30
+                )
             else:
                 try:
                     self._http_conn['connection'] = http.client.HTTPSConnection(
-                        self._mgmt_ip, timeout = 30,
+                        self._mgmt_ip,
+                        timeout = 30,
                         context = ssl._create_unverified_context()
                     )
                 except AttributeError:
-                    self._http_conn['connection'] = http.client.HTTPSConnection(self._mgmt_ip, timeout = 30)
+                    self._http_conn['connection'] = http.client.HTTPSConnection(
+                        self._mgmt_ip,
+                        timeout = 30
+                    )
 
             # Recursively re-enter function after creating connection.
             # Normally a bad thing but should only happen once.
@@ -623,9 +625,11 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
         # self._httpConn['connection'].close()
 
         '''
-        print u"Code: {0}\nHeaders: {1}\nData: {2}".format(response.status,
-                                                          pprint.pformat(response.getheaders()),
-                                                          htmlData)
+        print u"Code: {0}\nHeaders: {1}\nData: {2}".format(
+            response.status,
+            pprint.pformat(response.getheaders()),
+            htmlData
+        )
         '''
 
         return
@@ -748,24 +752,35 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
         # ubntbox_status_text = self._ssh_conn.run(['ubntbox', 'status'])
         # ubntbox_status_data = json.loads(ubntbox_status_text.output)
 
-        # device_version = self.parse_version_string(ubntbox_status_data['firmware']['version'])
-        # logger.debug('Device current version: {0}{1}'.format(device_version['arch'], device_version['version']))
+        # device_version = self.parse_version_string(
+        #     ubntbox_status_data['firmware']['version']
+        # )
+        # logger.debug('Device current version: {0}{1}'.format(
+        #     device_version['arch'], device_version['version']
+        # ))
 
         # # Right before we begin the upgrade process we need to standardize a couple of parameters.
 
         # # fetch the appropriate firmware
         # if device_version['version'] in fw_data[device_version['arch']]\
-        #     or device_version['version'] in ['v6.0.6', 'v6.0.7', 'v6.1.0', 'v6.1.3']: # Temp override due to elevate issues.
+        #     # Temp override due to elevate issues.
+        #     or device_version['version'] in ['v6.0.6', 'v6.0.7', 'v6.1.0', 'v6.1.3']:
         #     # Device is running an acceptable version
-        #     logger.info("Version '{0}' is acceptable, no upgrade required.".format(device_version['version']))
+        #     logger.info("Version '{0}' is acceptable, no upgrade required.".format(
+        #       device_version['version']
+        #     ))
         #     return device_version['version']
 
         # upgrade_version = list(fw_data[device_version['arch']].keys())[0]
 
-        # logger.debug("Upgrading to '{0}' from '{1}'".format(upgrade_version, device_version['version']))
+        # logger.debug("Upgrading to '{0}' from '{1}'".format(
+        #   upgrade_version, device_version['version']
+        # ))
         # fetch_params = ['wget', '-O', '/tmp/fwupdate.bin',
         #                 # '--timeout=120',
-        #                 'http://<sw host>/ubnt/{0}'.format(fw_data[device_version['arch']][upgrade_version]['filename'])]
+        #                 'http://<sw host>/ubnt/{0}'.format(
+        #                     fw_data[device_version['arch']][upgrade_version]['filename']
+        #               )]
         # # logger.debug("Fetch: {0}".format(fetch_params))
         # _ = self._ssh_conn.run(fetch_params)
 
@@ -806,9 +821,6 @@ class UbntDevice(airoscommon.AirOSCommonDevice):
         # else:
         #     raise RuntimeError("Device was upgraded from '{0}' to '{1}' ended up at version '{2}'".\
         #         format(device_version['version'], upgrade_version, device_new_version['version']))
-
-        return
-
 
 class UbntSM(UbntDevice):
     '''Depreciated: Ubnt v6 SM / CPE.
@@ -907,7 +919,6 @@ class UbntSM(UbntDevice):
     def fetch_cust_data(self):
         '''Convenience function for fetching commonly used data from SM.
 
-
         '''
         headers = {
             'Cookie': self._create_cookie(),
@@ -982,7 +993,7 @@ class UbntSM(UbntDevice):
             return_data['vlan'] = 0
             for k, val in interface_data.items():
                 if val['role'] == 'wan':
-                    interface, vlan = val['devname'].split('.')
+                    _, vlan = val['devname'].split('.')
                     return_data['vlan'] = vlan
         else:
             return_data['vlan'] = 0
@@ -1007,7 +1018,6 @@ class UbntSM(UbntDevice):
                     return_data['uploadrate'] = val['output.rate']
 
         return return_data
-
 
 class UbntAP(UbntDevice):
     '''Depreciated: Ubnt AP (v6)
@@ -1220,11 +1230,9 @@ class AirOSv6(airoscommon.AirOSCommonDevice):
                 # If the type is missing, then it isn't a input I want.
                 continue
 
-            try:
-                curr_field['disabled']
+            # Ignore disabled records
+            if 'disabled' in curr_field:
                 continue
-            except KeyError:
-                pass
 
             try:
                 value = curr_field['value']
@@ -1399,8 +1407,6 @@ class AirOSv6(airoscommon.AirOSCommonDevice):
 
         self._session.get(self._get_base_url(url))
 
-        return
-
 if __name__ == '__main__':
     #import pprint
 
@@ -1412,4 +1418,3 @@ if __name__ == '__main__':
     logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
     logging.basicConfig(level = logging.DEBUG, format=BASIC_FORMAT)
     logging.info("Start")
-

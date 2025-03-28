@@ -10,12 +10,11 @@ import re
 import socket
 import sys
 import urllib
-import urllib3
-
 from urllib.parse import urlparse
 
 # External imports
 import requests
+import urllib3
 
 # Local imports
 from . import exceptions
@@ -90,7 +89,7 @@ def determine_ssl(management_ip: str) -> bool:
     Args:
     '''
     try:
-        urllib3.util.ssl_.DEFAULT_CIPHERS += 'HIGH:!DH:!aNULL'
+        # urllib3.util.ssl_.DEFAULT_CIPHERS += 'HIGH:!DH:!aNULL'
         try:
             requests.packages.urllib3.contrib.pyopenssl.DEFAULT_SSL_CIPHER_LIST += 'HIGH:!DH:!aNULL'
         except AttributeError:
@@ -107,7 +106,9 @@ def determine_ssl(management_ip: str) -> bool:
     except requests.exceptions.ConnectTimeout as exc:
         raise exceptions.DeviceUnavailable(
             f"Unable to reach {management_ip}") from exc
-    except (urllib3.connection.HTTPConnection, socket.error, socket.timeout) as exc:
+    except (urllib3.exceptions.ConnectTimeoutError,
+            urllib3.exceptions.HTTPError,
+            socket.error, socket.timeout) as exc:
         # 113 - No route to host (Linux)
         # 10060 - Windows
         if exc.__class__.__name__ in ['timeout', 'BadStatusLine'] or\
@@ -118,7 +119,7 @@ def determine_ssl(management_ip: str) -> bool:
 
     location_parse = urllib.parse.urlparse(rez.url)
     if location_parse.scheme == 'https':
-        # logging.debug("SSL found")
+        logging.debug("SSL found")
         is_ssl = True
     else:
         is_ssl = False
@@ -275,7 +276,7 @@ def detect_ubnt_version(management_ip: str) -> bool:
         logger.debug(f"Device '{management_ip}' is not reachable")
         raise
 
-class MultiPartForm(object):
+class MultiPartForm:
     """Accumulate the data to be used when posting a form.
 
     Copied from: http://doughellmann.com/2009/07/pymotw-urllib2-library-for-opening-urls.html
@@ -290,16 +291,18 @@ class MultiPartForm(object):
         # Craft a random boundary.  If text is given, ensure that the chosen
         # boundary doesn't appear in the text.
         _width = len(repr(sys.maxsize-1))
-        _fmt = '%%0%dd' % _width
 
         token = random.randrange(sys.maxsize)
-        boundary = ('=' * 15) + (_fmt % token) + '=='
+        boundary = f"{'=' * 15}{token:0{_width}d}=="
         if text is None:
             return boundary
         bnd = boundary
         counter = 0
         while True:
-            cre = re.compile('^--' + re.escape(bnd) + '(--)?$', re.MULTILINE)
+            cre = re.compile(
+                '^--' + re.escape(bnd) + '(--)?$',
+                re.MULTILINE
+            )
             if not cre.search(text):
                 break
             bnd = boundary + '.' + str(counter)
