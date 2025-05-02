@@ -1,23 +1,14 @@
+[tool.hatch.version]
+path = "src/ubnt_automata/__init__.py"
+
 [project]
-# This is the name of your project. The first time you publish this
-# package, this name will be registered for you. It will determine how
-# users can install this project, e.g.:
-#
-# $ pip install sampleproject
-#
 # And where it will live on PyPI: https://pypi.org/project/sampleproject/
 #
 # There are some restrictions on what makes a valid project name
 # specification here:
 # https://packaging.python.org/specifications/core-metadata/#name
-name = "ubnt_automata"  # Required
-
-# Versions should comply with PEP 440:
-# https://www.python.org/dev/peps/pep-0440/
-#
-# For a discussion on single-sourcing the version, see
-# https://packaging.python.org/guides/single-sourcing-package-version/
-version = "0.0.3"  # Required
+name = "ubnt_automata"
+dynamic = ["version"]
 
 # This is a one-line description or tagline of what your project does. This
 # corresponds to the "Summary" metadata field:
@@ -57,7 +48,7 @@ license = {file = "LICENSE"}
 # authored the project, and a valid email address corresponding to the name
 # listed.
 authors = [
-  {name = "David M.", email = "dontemailme@example.com" } # Optional
+    {name = "David M.", email = "dontemailme@example.com" } # Optional
 ]
 
 # This should be your name or the names of the organization who currently
@@ -103,10 +94,10 @@ classifiers = [  # Optional
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [
-  "beautifulsoup4",
-  "requests",
-  "paramiko",
-  "spur",
+    "beautifulsoup4",
+    "requests",
+    "paramiko",
+    "spur",
 ]
 
 # List additional groups of dependencies here (e.g. development
