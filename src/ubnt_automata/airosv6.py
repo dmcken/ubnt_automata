@@ -1,6 +1,14 @@
-'''Ubiquiti Common classes / functions needed for handling Ubiquiti devices.
+'''Ubiquiti Common classes / functions needed for handling Ubiquiti devices'''
 
-'''
+# This is effectively dead code, kept simply for historical purposes
+# Silence the errors for now until I have the time to clean it or it is deleted
+# pylint: disable=protected-access,invalid-name,unused-variable,
+# pylint: disable=too-many-branches,logging-format-interpolation
+# pylint: disable=C0200,C0201,C0209,C0302
+# pylint: disable=R0913,R0914,R0915,R0917,R1711,R1724
+# pylint: disable=W0104,W0105,W0631,W0719
+
+
 # System imports
 import errno
 import http # Look to remove, replace by requests
