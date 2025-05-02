@@ -247,7 +247,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         Response is JSON:
         {"ok":true,"fast_restart":true,"code":0}
-        """ 
+        """
         lines = []
         for k,val in cfgdata.items():
             lines.append(f"{k}={val}")
