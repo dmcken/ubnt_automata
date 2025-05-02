@@ -13,7 +13,7 @@ from .utils import determine_device_type, parse_ubnt_version_string
 
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 
 __all__ = [
     'AirOSv6',
