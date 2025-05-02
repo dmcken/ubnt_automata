@@ -89,7 +89,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         Raises:
             exceptions.WrongPassword: Thrown if the login fails for authentication reasons.
             exceptions.DeviceUnavailable: Thrown if the login fails for connectivity reasons.
-        """        
+        """
         try:
             # Default to 'ubnt'
             if curr_user is None:
