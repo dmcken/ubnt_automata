@@ -20,6 +20,7 @@ class AirOSCommonDevice:
     # Default values
     _default_user = 'ubnt'
     _default_timeout = 30
+    _verify_ssl = False
 
     def __init__(self, management_ip: str, timeout: int = None):
         '''Constructor
