@@ -212,7 +212,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 f"Error decoding json in apply changes: {rez.content}"
             )
 
-    def getcfg(self):
+    def getcfg(self) -> dict[str,str]:
         '''Get the device configuration.
 
 
@@ -278,11 +278,15 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         logger.error(f"Error changing config: {res_data}")
 
-    def getstatus(self):
-        '''Get the device status.
+    def getstatus(self) -> dict:
+        """Get the device status.
 
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
 
-        '''
+        Returns:
+            dict: Status data.
+        """
         res = self._req_session.get(
             self._build_url("status.cgi"),
             verify=self._verify_ssl,
@@ -296,6 +300,30 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         # Something went wrong.
         raise RuntimeError(f"Error fetching status: {res.text}")
+
+    def getairview(self) -> dict:
+        """Get Air View data.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            dict: Air View data.
+        """
+        res = self._req_session.get(
+            self._build_url("airviewdata.cgi"),
+            verify=self._verify_ssl,
+            headers = {
+                'X-CSRF-ID': self._csrf_id,
+            }
+        )
+
+        if res.status_code == 200:
+            return res.json()
+
+        # Something went wrong.
+        raise RuntimeError(f"Error fetching status: {res.text}")
+
 
     def enable_debug(self) -> None:
         '''Enable debugging'''
