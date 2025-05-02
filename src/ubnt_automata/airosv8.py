@@ -117,6 +117,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 logger.debug(f"Error logging in: {rez.json()['error']}")
                 raise exceptions.WrongPassword()
 
+
             # Successful login - save the parameters
             self._curr_username = curr_user
             self._curr_password = curr_pw
@@ -124,7 +125,10 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             self._csrf_id = rez.headers['X-CSRF-ID']
         except exceptions.WrongPassword:
             raise
-        except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout) as exc:
+        except (requests.exceptions.ConnectionError, 
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.JSONDecodeError # Likely not a Ubnt device
+                ) as exc:
             raise exceptions.DeviceUnavailable from exc
         except Exception as exc:
             logger.debug(
