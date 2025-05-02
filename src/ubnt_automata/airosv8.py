@@ -59,12 +59,8 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             timeout=timeout,
         )
         self._req_session = requests.Session()
-        # self._mgmt_ip = mgmt_ip
-        # self._username = username
-        # self._password = password
-        # self._is_ssl = True
-        self._dev_info = None
-        self._csrf_id = None
+        self._dev_info   = None
+        self._csrf_id    = None
 
     def _build_url(self, path: str):
         '''Build the final URL to pass to request library.
@@ -241,14 +237,17 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         return cfg_data
 
-    def writecfg(self, cfgdata):
-        '''Write config to device.
+    def writecfg(self, cfgdata: dict[str,str]) -> None:
+        """Write config to device.
+
+        Args:
+            cfgdata (dict[str,str]): Config to set on device.
 
         testmode: "yes" is to be set here.
 
         Response is JSON:
         {"ok":true,"fast_restart":true,"code":0}
-        '''
+        """ 
         lines = []
         for k,val in cfgdata.items():
             lines.append(f"{k}={val}")
@@ -257,7 +256,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         cfg_output = "\r\n".join(lines)
 
-        logger.debug(f"cfgoutput: \n{cfg_output}")
+        logger.debug(f"Cfgoutput: \n{cfg_output}")
 
         cfg_data = {
             'cfgData': cfg_output,
