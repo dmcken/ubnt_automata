@@ -1,5 +1,4 @@
-'''Base class for common functions for all Ubnt AirOS devices.
-'''
+'''Base class for common functions for all Ubnt AirOS devices'''
 
 # System imports
 import abc
