@@ -80,33 +80,45 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         return final_url
 
     def login_http(self, curr_pw: str, curr_user:str = None) -> None:
-        '''Login to device via HTTP(s).
+        """Login to device via HTTP(s).
 
-        '''
+        Args:
+            curr_pw (str): Password to use for login.
+            curr_user (str, optional): Username to use for login. Defaults to None.
+
+        Raises:
+            exceptions.WrongPassword: Thrown if the login fails for authentication reasons.
+            exceptions.DeviceUnavailable: Thrown if the login fails for connectivity reasons.
+        """        
         try:
+            # Default to 'ubnt'
+            if curr_user is None:
+                curr_user = self._default_user
+
             auth_data = {
                 'username': curr_user,
                 'password': curr_pw,
             }
 
-            # Get cookies
+            # Get connection cookies
             self._req_session.get(
                 self._build_url(''),
-                verify=False,
+                verify=self._verify_ssl,
             )
 
             # Login
             rez = self._req_session.post(
                 self._build_url("api/auth"),
                 data=auth_data,
-                verify=False,
+                verify=self._verify_ssl,
             )
 
             if rez.status_code != 200:
                 logger.debug(f"Error logging in: {rez.json()['error']}")
                 raise exceptions.WrongPassword()
 
-            # Successful login
+            # Successful login - save the parameters
+            self._curr_username = curr_user
             self._curr_password = curr_pw
             self._dev_info = rez.json()['boardinfo']
             self._csrf_id = rez.headers['X-CSRF-ID']
@@ -140,7 +152,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         rez = self._req_session.post(
             self._build_url("pwd.cgi"),
             data=pw_data,
-            verify=False,
+            verify=self._verify_ssl,
             headers = {
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'X-CSRF-ID': self._csrf_id,
@@ -208,7 +220,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         '''
         rez = self._req_session.get(
             self._build_url("getcfg.cgi"),
-            verify=False,
+            verify=self._verify_ssl,
             headers = {
                 'X-CSRF-ID': self._csrf_id,
             }
@@ -251,7 +263,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         rez = self._req_session.post(
             self._build_url("writecfg.cgi"),
             data=cfg_data,
-            verify=False,
+            verify=self._verify_ssl,
             headers = {
                 'X-CSRF-ID': self._csrf_id,
             }
@@ -271,7 +283,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         '''
         res = self._req_session.get(
             self._build_url("status.cgi"),
-            verify=False,
+            verify=self._verify_ssl,
             headers = {
                 'X-CSRF-ID': self._csrf_id,
             }
