@@ -23,7 +23,9 @@ import pprint
 import ubnt_automata
 
 dev = ubnt_automata.AirOSv8('10.0.0.1')
-dev.login_http('ubnt')
+dev.login_http('ubnt') # Default to using 'ubnt' as the username
+# full version
+# dev.login_http('ubnt','ubnt')
 device_config = dev.getcfg()
 
 pprint.pprint(device_config)
