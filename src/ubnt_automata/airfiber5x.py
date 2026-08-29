@@ -1,40 +1,43 @@
 '''AirFiber implementation.
 
 Shares the same auth/session mechanism as AirOSv8 (/api/auth, X-CSRF-ID
-header). Verified live against a real airFiber 60 HD (AF60HD, fw
-v1.2.4) - the API surface is expected to be shared across the AirFiber
-family, but only AF60 HD has actually been confirmed so far.
+header). Verified live against both a real airFiber 60 HD (AF60HD, fw
+v1.2.4, 60GHz) and a real airFiber 5XHD (AF-5XHD, fw v1.5.6, 5GHz) -
+the two use meaningfully different status.cgi shapes for the wireless
+link (see get_link_status()), but everything else (auth, getcfg(),
+discovery.cgi, ...) is identical between them.
 
 Auth endpoint:
 - /api/auth
 
-Data endpoints confirmed against a live AF60 HD:
-- status.cgi          - Rich JSON: host/uptime/fw, wireless link stats
-                         (rssi/snr/capacity/distance/mcs), remote-end
-                         stats, per-interface counters, GPS.
+Data endpoints confirmed against both a live AF60 HD and AF5XHD:
+- status.cgi          - Rich JSON: host/uptime/fw, wireless link stats,
+                         remote-end stats, per-interface counters, GPS.
+                         The link-stats sub-shape differs by hardware
+                         generation - see get_link_status().
 - getcfg.cgi           - Full device config as newline-separated
                          key=value text (same format as AirOSv8).
 - hist-stats.cgi       - JSON historical link-score/stat samples.
 - ipscan.cgi           - Newline-separated list of IPs seen on the
                          management segment.
 - api/warnings         - JSON device warnings (default password set,
-                         crash report pending, etc).
-- airviewdata.cgi      - Exists (200) but returned an empty body on
-                         idle hardware; may need AirView actively
-                         running to populate.
-
+                         crash report pending, etc). Field set differs
+                         slightly between AF60HD/AF5XHD but both 200.
+- airviewdata.cgi      - Returned an empty body on an idle AF60HD;
+                         returned real spectral scan data on the
+                         AF5XHD. Same shape as AirOSv8's getairview().
 - discovery.cgi        - POST discover=y&duration=500. Returns nearby
                          devices found via broadcast discovery (hwaddr,
                          ipv4, hostname, product, uptime, wmode,
                          fwversion) - this is the "Device Discovery"
-                         feature in the UI. Confirmed via a captured
-                         HAR of the real web UI.
-
-Confirmed NOT present on AF60 HD (404) - do not call these for this
-model, kept here only as breadcrumbs for other AirFiber hardware:
-- antlist.cgi
-- btstatus.cgi
-- api/fw/update-check
+                         feature in the UI. Confirmed on both models.
+- btstatus.cgi         - Bluetooth status (mode/name/discoverable/
+                         connection_state). 404 on the AF60HD tested,
+                         200 with real data on the AF5XHD.
+- antlist.cgi          - Static reference table of compatible antenna
+                         models and their gain, per board model. Not
+                         live telemetry - bundled in firmware. 404 on
+                         the AF60HD tested, 200 on the AF5XHD.
 
 Confirmed via HAR capture but NOT implemented (out of scope / low
 value): both need a separate x-auth-token header rather than the
@@ -51,6 +54,11 @@ far since nothing below needs it yet):
                                  new firmware) - not local device
                                  telemetry, needs internet from the
                                  device.
+
+Also seen but not implemented (low value / static reference data, not
+live telemetry): api/regdomain (regulatory frequency/power table),
+api/info/public and api/info/user (pre-auth product name / SSO flag -
+api/info/public's role is already covered by utils.determine_device_type()).
 
 Note: the "Excellent Link"/"Link Potential"/Gbps rate-badge labels
 shown in the web UI are NOT returned by the device at all - that UI is
@@ -103,13 +111,24 @@ class AirFiberGPS:
 class AirFiberLinkEnd:
     '''One end (local or remote) of an AirFiber PtP backhaul link.
 
+    Unified across both hardware generations get_link_status() has
+    seen - 60GHz (AF60HD, PRS-based, status.cgi's sta['prs_sta']) and
+    5GHz (AF5XHD, AirMax-based, fields directly on sta) use genuinely
+    different raw field layouts, not just different names, so this
+    dataclass's values are built by variant-specific parsing rather
+    than a single field-rename table. See get_link_status().
+
     signal_expected_dbm/rate_expected/capacity_expected_mbps follow the
-    device's dl=local/ul=remote convention (empirically confirmed: the
-    web UI's "Local RX Data Rate 11 (Expected 11)" / "Remote RX Data
-    Rate 11 (Expected 10)" matched dl_rate_expect=11/ul_rate_expect=10
-    exactly). signal_expected_dbm's local/remote split is inferred by
-    the same convention but wasn't separately confirmed (both sides
-    happened to read the same expected value in testing).
+    device's dl=local/ul=remote convention (empirically confirmed on
+    AF60HD: the web UI's "Local RX Data Rate 11 (Expected 11)" /
+    "Remote RX Data Rate 11 (Expected 10)" matched dl_rate_expect=11/
+    ul_rate_expect=10 exactly). signal_expected_dbm's local/remote
+    split is inferred by the same convention but wasn't separately
+    confirmed (both sides happened to read the same expected value in
+    testing). capacity_mbps splits the same way on AF5XHD too -
+    confirmed live that local.capacity_mbps + remote.capacity_mbps
+    reproduces airmax.combined_capacity exactly (downlink_capacity +
+    uplink_capacity = combined_capacity).
     '''
     hostname: str
     device_model: str
@@ -368,6 +387,46 @@ class AirFiber(airoscommon.AirOSCommonDevice):
 
         return res.json()
 
+    def getbtstatus(self) -> dict:
+        '''Get Bluetooth status (btstatus.cgi).
+
+        Confirmed 404 on an AF60HD and 200 (with real data) on an
+        AF5XHD - check for that if calling this against unknown/mixed
+        hardware.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            dict: Bluetooth status (mode/name/discoverable/connection_state).
+        '''
+        res = self._get("btstatus.cgi")
+
+        if res.status_code == 200:
+            return res.json()
+
+        raise RuntimeError(f"Error fetching bluetooth status: {res.status_code} {res.text}")
+
+    def getantlist(self) -> dict:
+        '''Get the compatible antenna reference table (antlist.cgi).
+
+        Static data bundled in firmware (antenna model names/gains per
+        board model), not live device telemetry. Confirmed 404 on an
+        AF60HD and 200 on an AF5XHD.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            dict: {"boards": [{"model": ..., "antennas": [...]}, ...]}.
+        '''
+        res = self._get("antlist.cgi")
+
+        if res.status_code == 200:
+            return res.json()
+
+        raise RuntimeError(f"Error fetching antenna list: {res.status_code} {res.text}")
+
     def get_boardinfo(self) -> dict[str, str]:
         '''Parse the boardinfo blob captured at login (login_http() must
         have been called first).
@@ -430,6 +489,15 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         the device reports zero or more than one station, since this
         hasn't been observed/verified against real hardware.
 
+        Branches on hardware generation, confirmed live against both:
+        - 60GHz/PRS (AF60HD): link stats live under sta['prs_sta'] /
+          sta['remote']['prs_remote'], and total throughput is at
+          wireless.throughput.{tx,rx}.
+        - 5GHz/AirMax (AF5XHD): link stats are directly on sta /
+          sta['remote'] (no prs_* wrapper) - this generation doesn't
+          have wireless.throughput at all, so falls back to
+          wireless.stats.{tx,rx}_throughput instead.
+
         Raises:
             RuntimeError: Raised if the device isn't linked to exactly
                 one station.
@@ -445,29 +513,37 @@ class AirFiber(airoscommon.AirOSCommonDevice):
                 f"Expected exactly one PtP station, got {len(stations)}"
             )
         sta = stations[0]
-        prs_local = sta['prs_sta']
         remote = sta['remote']
+
+        if 'prs_sta' in sta:
+            local_end, remote_end = self._parse_60ghz_ends(status, sta, remote)
+        else:
+            local_end, remote_end = self._parse_airmax_ends(status, sta, remote)
+
+        throughput = status['wireless'].get('throughput')
+        if throughput:
+            throughput_tx_raw = throughput['tx']
+            throughput_rx_raw = throughput['rx']
+        else:
+            stats = status['wireless'].get('stats', {})
+            throughput_tx_raw = stats.get('tx_throughput')
+            throughput_rx_raw = stats.get('rx_throughput')
+
+        return AirFiberLinkStatus(
+            distance_m=sta['distance'],
+            local=local_end,
+            remote=remote_end,
+            throughput_tx_raw=throughput_tx_raw,
+            throughput_rx_raw=throughput_rx_raw,
+        )
+
+    def _parse_60ghz_ends(
+        self, status: dict, sta: dict, remote: dict,
+    ) -> tuple[AirFiberLinkEnd, AirFiberLinkEnd]:
+        '''Build (local, remote) AirFiberLinkEnd for a PRS-based (60GHz,
+        e.g. AF60HD) status.cgi.'''
+        prs_local = sta['prs_sta']
         prs_remote = remote['prs_remote']
-
-        local_gps = None
-        if status.get('gps', {}).get('fix'):
-            local_gps = AirFiberGPS(
-                latitude=status['gps']['lat'],
-                longitude=status['gps']['lon'],
-                altitude_m=status['gps']['alt'],
-                satellites=status['gps']['sats'],
-                fix=status['gps']['fix'],
-            )
-
-        remote_gps = None
-        if remote.get('gps', {}).get('fix'):
-            remote_gps = AirFiberGPS(
-                latitude=float(remote['gps']['lat']),
-                longitude=float(remote['gps']['lon']),
-                altitude_m=float(remote['gps']['alt']),
-                satellites=remote['gps']['sats'],
-                fix=remote['gps']['fix'],
-            )
 
         local_end = AirFiberLinkEnd(
             hostname=status['host']['hostname'],
@@ -487,7 +563,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             tx_mcs=prs_local['tx_mcs'],
             capacity_mbps=prs_local['capacity'],
             linkscore_pct=prs_local['dl_linkscore'],
-            gps=local_gps,
+            gps=self._parse_gps(status.get('gps')),
         )
 
         remote_end = AirFiberLinkEnd(
@@ -508,15 +584,98 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             tx_mcs=prs_remote['tx_mcs'],
             capacity_mbps=prs_remote['capacity'],
             linkscore_pct=prs_local['ul_linkscore'],
-            gps=remote_gps,
+            gps=self._parse_gps(remote.get('gps')),
         )
 
-        return AirFiberLinkStatus(
-            distance_m=sta['distance'],
-            local=local_end,
-            remote=remote_end,
-            throughput_tx_raw=status['wireless']['throughput']['tx'],
-            throughput_rx_raw=status['wireless']['throughput']['rx'],
+        return local_end, remote_end
+
+    def _parse_airmax_ends(
+        self, status: dict, sta: dict, remote: dict,
+    ) -> tuple[AirFiberLinkEnd, AirFiberLinkEnd]:
+        '''Build (local, remote) AirFiberLinkEnd for an AirMax-based (5GHz,
+        e.g. AF5XHD) status.cgi.
+
+        This generation has no prs_sta/prs_remote wrapper - equivalent
+        fields sit directly on sta/sta['remote'], with different names:
+        - signal_dbm: sta['signal'] (same meaning as prs_sta.rssi_data,
+          despite AirMax confusingly naming its *own* SNR-like field
+          'rssi' - confirmed live: sta['rssi'] == sta['signal'] -
+          sta['noisefloor'] exactly, i.e. it's actually the SNR).
+        - snr_db: sta['rssi'] (see above).
+        - tx_mcs/rx_mcs: sta['tx_idx']/sta['rx_idx'] (same role, index
+          into a modulation/rate table, just named 'idx' not 'mcs').
+        - capacity_mbps: sta['airmax']['downlink_capacity']/
+          ['uplink_capacity'], in Kbps - scaled to Mbps for consistency
+          with the 60GHz variant, whose capacity fields are already in
+          Mbps.
+        - signal_expected_dbm: averaged from the two receive chains'
+          sta['idealpwr0']/['idealpwr1'] (60GHz has one dl_signal_expect
+          value; AirMax reports one per chain instead).
+        '''
+        airmax = sta['airmax']
+
+        local_end = AirFiberLinkEnd(
+            hostname=status['host']['hostname'],
+            device_model=status['host']['devmodel'],
+            mac=status['wireless']['apmac'],
+            fw_version=status['host']['fwversion'],
+            uptime_seconds=status['host']['uptime'],
+            cpu_load_pct=status['host']['cpuload'],
+            memory_used_pct=self._mem_used_pct(
+                status['host']['totalram'], status['host']['freeram']
+            ),
+            mode=status['wireless']['mode'],
+            signal_dbm=sta['signal'],
+            signal_expected_dbm=(sta['idealpwr0'] + sta['idealpwr1']) // 2,
+            snr_db=sta['rssi'],
+            rx_mcs=sta['rx_idx'],
+            tx_mcs=sta['tx_idx'],
+            capacity_mbps=airmax['downlink_capacity'] // 1000,
+            linkscore_pct=round(sta['dl_score']),
+            gps=self._parse_gps(status.get('gps')),
+        )
+
+        remote_end = AirFiberLinkEnd(
+            hostname=remote['hostname'],
+            device_model=remote.get('platform', remote.get('devmodel', '')),
+            mac=sta['mac'],
+            fw_version=remote['version'],
+            uptime_seconds=remote['uptime'],
+            cpu_load_pct=remote['cpuload'],
+            memory_used_pct=self._mem_used_pct(
+                remote['totalram'], remote['freeram']
+            ),
+            mode=remote.get('mode', ''),
+            signal_dbm=remote['signal'],
+            signal_expected_dbm=(remote['idealpwr0'] + remote['idealpwr1']) // 2,
+            snr_db=remote['rssi'],
+            rx_mcs=sta['tx_idx'],
+            tx_mcs=remote.get('tx_mcs', sta['rx_idx']),
+            capacity_mbps=airmax['uplink_capacity'] // 1000,
+            linkscore_pct=round(sta['ul_score']),
+            gps=self._parse_gps(remote.get('gps')),
+        )
+
+        return local_end, remote_end
+
+    @staticmethod
+    def _parse_gps(gps_data: dict | None) -> AirFiberGPS | None:
+        '''Parse a GPS block, returning None if there's no fix.
+
+        Values come through as either numbers or numeric strings
+        depending on hardware generation and local/remote side - always
+        cast to float/int explicitly rather than trusting the source
+        type.
+        '''
+        if not gps_data or not gps_data.get('fix'):
+            return None
+
+        return AirFiberGPS(
+            latitude=float(gps_data['lat']),
+            longitude=float(gps_data['lon']),
+            altitude_m=float(gps_data['alt']),
+            satellites=int(gps_data['sats']),
+            fix=int(gps_data['fix']),
         )
 
     @staticmethod
