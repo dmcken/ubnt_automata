@@ -1,14 +1,23 @@
-'''UISP Wave device implementation.
+'''UISP-firmware device implementation.
 
-Covers the whole Wave hardware family (AP, Pro, Nano, LR, ...) and both
-operating modes (PtMP access point or PtP link) - all confirmed to
-share the exact same API and JSON shape (statistics.wireless.peers is
-just length 1 for a PtP link instead of many for an AP's connected
-clients). Verified live against a real Wave AP (product "Wave AP",
-model Wave-AP, fw GMC.ipq5018...) acting as an access point, and a real
-Wave Pro (product "Wave Pro", model Wave-Pro, fw MGMP.ipq807x...) acting
-as one end of a PtP backhaul, each cross-referenced against a captured
-HAR of its own live web UI session.
+Covers every Ubiquiti device confirmed running this generation of
+firmware, regardless of product line - the Wave family (AP, Pro, Nano,
+LR, ...) in either PtMP (access point) or PtP (link) mode, and now also
+an AirFiber 60 XR (product "airFiber 60 XR", family "airfiber-60") -
+all confirmed to share the exact same API and JSON shape
+(statistics.wireless.peers is just length 1 for a PtP link instead of
+many for an AP's connected clients). This was originally written as
+"wave.py"/class Wave before the AF60-XR turned up using byte-for-byte
+the same API despite being AirFiber-branded, at which point it was
+generalized and renamed to reflect the underlying firmware rather than
+any one product line.
+
+Verified live against a real Wave AP (product "Wave AP", model
+Wave-AP, fw GMC.ipq5018...) acting as an access point, a real Wave Pro
+(product "Wave Pro", model Wave-Pro, fw MGMP.ipq807x...) acting as one
+end of a PtP backhaul, and a real AirFiber 60 XR (model AF60-XR) also
+acting as one end of a PtP backhaul - each cross-referenced against a
+captured HAR of its own live web UI session.
 
 This is a completely different API family from AirOS/AirFiber - a
 modern JSON REST API under /api/v1.0/, not .cgi endpoints.
@@ -47,13 +56,14 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        the device, same reasoning as
                                        not poking AirFiber's
                                        airviewdata.cgi). Confirmed
-                                       working live on both a Wave AP
-                                       and a PtP-configured Wave Pro,
-                                       even though the latter's web UI
-                                       never actually called it (that's
-                                       just the nav hiding the page for
-                                       PtP mode - the endpoint itself
-                                       works regardless).
+                                       working live on a Wave AP and a
+                                       PtP-configured Wave Pro, even
+                                       though the latter's web UI never
+                                       actually called it (that's just
+                                       the nav hiding the page for PtP
+                                       mode - the endpoint itself works
+                                       regardless). Also present in the
+                                       AF60-XR's HAR.
 - tools/compose (POST)              - Batches many GET routes into one
                                        call: {"requests":[{"method":
                                        "GET","route": "/public/device"},
@@ -106,8 +116,8 @@ urllib3.disable_warnings()
 
 
 @dataclasses.dataclass
-class WaveGPS:
-    '''GPS fix as reported by a Wave device.'''
+class UispGPS:
+    '''GPS fix as reported by a UISP-firmware device.'''
     latitude: float
     longitude: float
     altitude_m: float
@@ -116,7 +126,7 @@ class WaveGPS:
 
 
 @dataclasses.dataclass
-class WavePeer:
+class UispPeer:
     '''One connected peer - the other client for a PtMP AP, or the
     single far end for a PtP link.
 
@@ -128,9 +138,9 @@ class WavePeer:
 
     linkscore_dl/linkscore_ul follow the same dl=this-device-side/
     ul=peer-side convention empirically confirmed on AirFiber, but this
-    pairing has NOT been separately confirmed for Wave (no screenshots
-    to cross-check against, only HARs) - treat as a reasonable
-    assumption, not a verified fact.
+    pairing has NOT been separately confirmed here (no screenshots to
+    cross-check against, only HARs) - treat as a reasonable assumption,
+    not a verified fact.
     '''
     hostname: str
     product: str
@@ -146,25 +156,27 @@ class WavePeer:
     rx_mcs_idx: int | None
     linkscore_dl: float | None
     linkscore_ul: float | None
-    gps: WaveGPS | None
+    gps: UispGPS | None
 
 
 @dataclasses.dataclass
-class WaveStatus:
-    '''Structured view of a Wave device's own status and all connected
-    peers (statistics). For a PtP link, `peers` will have exactly one
-    entry - the far end.'''
+class UispDeviceStatus:
+    '''Structured view of a UISP-firmware device's own status and all
+    connected peers (statistics). For a PtP link, `peers` will have
+    exactly one entry - the far end.'''
     hostname: str
     uptime_seconds: int
     cpu_load_pct: float
     memory_used_pct: float
-    gps: WaveGPS | None
-    peers: list[WavePeer]
+    gps: UispGPS | None
+    peers: list[UispPeer]
 
 
-class Wave(airoscommon.AirOSCommonDevice):
-    '''UISP Wave device handler - covers the whole Wave family (AP, Pro,
-    Nano, LR, ...) in either PtMP (access point) or PtP (link) mode.
+class UispDevice(airoscommon.AirOSCommonDevice):
+    '''UISP-firmware device handler - covers every product line
+    confirmed running this firmware generation (Wave AP/Pro/Nano/LR,
+    AirFiber 60 XR, ...) in either PtMP (access point) or PtP (link)
+    mode.
 
     Read-only for now: change_password()/apply_changes() are
     deliberately no-ops here, never touching the device.
@@ -359,8 +371,7 @@ class Wave(airoscommon.AirOSCommonDevice):
         Deliberately never triggers a scan - only reports current
         status (e.g. {"status": "not_started"}) - starting one changes
         the device's wireless behaviour, out of scope for fetch-only.
-        Confirmed working on both a Wave AP and a PtP-configured Wave
-        Pro.
+        Confirmed working on a Wave AP and a PtP-configured Wave Pro.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
@@ -431,7 +442,7 @@ class Wave(airoscommon.AirOSCommonDevice):
                 )
         return result
 
-    def get_status(self) -> WaveStatus:
+    def get_status(self) -> UispDeviceStatus:
         '''Structured view of this device's own status and all connected
         peers. For a PtP link, `peers` will have exactly one entry.
 
@@ -444,7 +455,7 @@ class Wave(airoscommon.AirOSCommonDevice):
                 expected fields.
 
         Returns:
-            WaveStatus: Structured device + peer link status.
+            UispDeviceStatus: Structured device + peer link status.
         '''
         stats = self.getstatistics()
         device = stats['device']
@@ -459,7 +470,7 @@ class Wave(airoscommon.AirOSCommonDevice):
             if cpu_cores else 0.0
         )
 
-        return WaveStatus(
+        return UispDeviceStatus(
             hostname=system_info.get('hostname', ''),
             uptime_seconds=device['uptime'],
             cpu_load_pct=cpu_avg,
@@ -469,12 +480,12 @@ class Wave(airoscommon.AirOSCommonDevice):
         )
 
     @staticmethod
-    def _parse_gps(gps_data: dict | None) -> WaveGPS | None:
+    def _parse_gps(gps_data: dict | None) -> UispGPS | None:
         '''Parse a GPS block, returning None if there's no fix.'''
         if not gps_data or not gps_data.get('fix'):
             return None
 
-        return WaveGPS(
+        return UispGPS(
             latitude=gps_data['lat'],
             longitude=gps_data['lon'],
             altitude_m=gps_data['alt'],
@@ -482,7 +493,7 @@ class Wave(airoscommon.AirOSCommonDevice):
             fix=gps_data['fix'],
         )
 
-    def _parse_peer(self, peer: dict) -> WavePeer:
+    def _parse_peer(self, peer: dict) -> UispPeer:
         '''Parse one entry from statistics' wireless.peers list.'''
         common = peer['common']
         identification = common['identification']
@@ -498,7 +509,7 @@ class Wave(airoscommon.AirOSCommonDevice):
         mcs = link_quality.get('mcs', {})
         linkscore = link_quality.get('linkScore', {})
 
-        return WavePeer(
+        return UispPeer(
             hostname=common.get('hostname', ''),
             product=identification.get('product', ''),
             model=identification.get('model', ''),
