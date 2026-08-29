@@ -9,6 +9,7 @@ from . import exceptions
 from .airfiber5x import AirFiber
 from .airosv8 import AirOSv8
 from .airosv6 import AirOSv6
+from .edgerouter import EdgeRouter
 from .uisp import UispDevice
 from .utils import determine_device_type, parse_ubnt_version_string
 
@@ -21,6 +22,7 @@ __all__ = [
     'AirFiber',
     'AirOSv6',
     'AirOSv8',
+    'EdgeRouter',
     'UispDevice',
     'determine_device_type',
     'exceptions',
