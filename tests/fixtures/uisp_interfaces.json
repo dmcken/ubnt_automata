@@ -1,0 +1,62 @@
+[
+  {
+    "identification": {
+      "id": "eth1",
+      "name": "",
+      "mac": "aa:bb:cc:dd:ee:01",
+      "macOverride": "",
+      "type": "ethernet"
+    },
+    "status": {
+      "enabled": true,
+      "description": "100 Mbps - Full Duplex",
+      "plugged": true,
+      "currentSpeed": "100-full",
+      "speed": "auto",
+      "arpProxy": false,
+      "mtu": 1500
+    },
+    "addresses": [
+      {
+        "type": "dynamic",
+        "version": "v6",
+        "cidr": "fe80::a8bb:ccff:fedd:ee01/64",
+        "eui64": true,
+        "origin": "linkLocal"
+      },
+      {
+        "type": "static",
+        "version": "v4",
+        "cidr": "192.0.2.10/24",
+        "eui64": false
+      }
+    ],
+    "ethernet": {
+      "poe": "off",
+      "flowControl": {"receive": false, "transmit": false},
+      "lldp": {"enabled": true}
+    }
+  },
+  {
+    "identification": {
+      "id": "eth0",
+      "name": "",
+      "mac": "aa:bb:cc:dd:ee:02",
+      "macOverride": "",
+      "type": "ethernet"
+    },
+    "status": {
+      "enabled": true,
+      "plugged": false,
+      "speed": "auto",
+      "arpProxy": false,
+      "mtu": 1500
+    },
+    "addresses": [],
+    "ethernet": {
+      "poe": "24v",
+      "flowControl": {"receive": false, "transmit": false},
+      "lldp": {"enabled": true}
+    }
+  }
+]

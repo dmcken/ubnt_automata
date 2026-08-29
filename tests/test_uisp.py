@@ -138,6 +138,42 @@ class TestGetPublicDevice:
             assert '401' in str(exc)
 
 
+class TestGetInterfaces:
+    def test_returns_identification_status_and_addresses(self, requests_mock, load_json):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/interfaces',
+            json=load_json('uisp_interfaces.json'),
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        result = dev.get_interfaces()
+
+        assert len(result) == 2
+        eth1 = next(i for i in result if i['identification']['id'] == 'eth1')
+        assert eth1['identification']['mac'] == 'aa:bb:cc:dd:ee:01'
+        assert eth1['status']['mtu'] == 1500
+        static_v4 = next(a for a in eth1['addresses'] if a['type'] == 'static')
+        assert static_v4['cidr'] == '192.0.2.10/24'
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/interfaces',
+            status_code=500,
+            text='error',
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.get_interfaces()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '500' in str(exc)
+
+
 class TestGetMacTable:
     def test_returns_parsed_entries(self, requests_mock):
         requests_mock.get(

@@ -80,6 +80,12 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        an EdgePower/EdgePoint-specific
                                        wrinkle (results mix in raw LLDP
                                        neighbor entries).
+- interfaces                         - Per-interface identification
+                                       (mac/type), status (enabled/mtu/
+                                       description), and addresses
+                                       (static/dynamic, v4/v6, CIDR) -
+                                       confirmed on EdgePower, not tried
+                                       on the wireless product lines.
 - tools/mac-table                   - MAC/ARP table - confirmed on
                                        EdgePower, not tried on the
                                        wireless product lines.
@@ -418,6 +424,31 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             return res.json()
 
         raise RuntimeError(f"Error fetching discovery data: {res.status_code} {res.text}")
+
+    def get_interfaces(self) -> list[dict]:
+        '''Get per-interface identification/status/addresses (interfaces).
+
+        Confirmed live on EdgePower devices (eth0/eth1) - not tried on
+        the wireless product lines, whose radio interface(s) may use a
+        different `identification.type` value than the plain
+        `"ethernet"` seen so far.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            list[dict]: One entry per interface - {"identification":
+                {"id", "name", "mac", "macOverride", "type"}, "status":
+                {"enabled", "description", "plugged", "speed", "mtu"},
+                "addresses": [{"type": "static"/"dynamic", "version":
+                "v4"/"v6", "cidr", ...}, ...]}.
+        '''
+        res = self._get("interfaces")
+
+        if res.status_code == 200:
+            return res.json()
+
+        raise RuntimeError(f"Error fetching interfaces: {res.status_code} {res.text}")
 
     def get_mac_table(self) -> list[dict]:
         '''Get the MAC/ARP table (tools/mac-table).
