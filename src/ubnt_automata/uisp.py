@@ -67,13 +67,19 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        works fine on EdgePower too.
 - statistics/historical             - Historical stat samples.
 - system/alerts                     - Device alerts/warnings list.
-- tools/discovery/neighbors (POST)  - Network-wide Ubiquiti device
+- tools/discovery/neighbors (GET)   - Network-wide Ubiquiti device
                                        discovery (broader than just
-                                       this device's own peers). See
+                                       this device's own peers). GET is
+                                       used since it's confirmed to
+                                       work everywhere tested; POST
+                                       also works on Wave/AirFiber-XR/
+                                       EdgePower but is explicitly
+                                       rejected (400) by an EdgePoint
+                                       S16 running older firmware. See
                                        get_discovery()'s docstring for
-                                       an EdgePower-specific wrinkle
-                                       (GET also works, and results mix
-                                       in raw LLDP neighbor entries).
+                                       an EdgePower/EdgePoint-specific
+                                       wrinkle (results mix in raw LLDP
+                                       neighbor entries).
 - tools/mac-table                   - MAC/ARP table - confirmed on
                                        EdgePower, not tried on the
                                        wireless product lines.
@@ -324,7 +330,13 @@ class UispDevice(airoscommon.AirOSCommonDevice):
     def get_public_device(self) -> dict:
         '''Pre-auth device identification (public/device).
 
-        No login required at all - safe to call before login_http().
+        Usually needs no login at all - safe to call before
+        login_http() on most devices confirmed so far (Wave/AirFiber-XR/
+        EdgePower/newer-firmware EdgePoint). Confirmed live, though,
+        that an EdgePoint S16 running older firmware returns 401 here
+        even pre-login - it's not universal, so callers that need to
+        support both should be prepared for this to require an active
+        session on older firmware.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
@@ -404,13 +416,16 @@ class UispDevice(airoscommon.AirOSCommonDevice):
 
         Broader than just this device's own peers - returns whatever
         Ubiquiti gear responds to discovery on the local segment. Uses
-        POST (confirmed on Wave/AirFiber-XR, matching AirFiber's own
-        discovery.cgi), but this endpoint accepts GET too - confirmed
-        live on an EdgePower, whose own web UI calls it that way. On
-        EdgePower this list also mixes in raw LLDP neighbor entries
-        (protocol=LLDP, only localInterfaceID/mac/remoteInterfaceID/age -
-        no hostname/product/ip) alongside the usual UBNT-protocol
-        entries, for any non-Ubiquiti neighbor gear.
+        GET - Wave/AirFiber-XR's own web UI calls this via POST
+        (matching AirFiber's own discovery.cgi), and that also works,
+        but an EdgePoint S16 running older firmware explicitly rejects
+        POST here (400 "Request is not supported") while GET works
+        fine on it - and GET was confirmed to also work on Wave AP and
+        EdgePower, so it's the more broadly compatible choice. On
+        EdgePower/EdgePoint this list also mixes in raw LLDP neighbor
+        entries (protocol=LLDP, only localInterfaceID/mac/
+        remoteInterfaceID/age - no hostname/product/ip) alongside the
+        usual UBNT-protocol entries, for any non-Ubiquiti neighbor gear.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
@@ -418,7 +433,7 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         Returns:
             list[dict]: One entry per discovered device.
         '''
-        res = self._post("tools/discovery/neighbors")
+        res = self._get("tools/discovery/neighbors")
 
         if res.status_code == 200:
             return res.json()
