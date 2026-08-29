@@ -1,4 +1,7 @@
 # Ubiquiti Automations
+[![Tests](https://github.com/dmcken/ubnt_automata/actions/workflows/tests.yml/badge.svg)](https://github.com/dmcken/ubnt_automata/actions/workflows/tests.yml)
+[![Ruff](https://github.com/dmcken/ubnt_automata/actions/workflows/ruff.yml/badge.svg)](https://github.com/dmcken/ubnt_automata/actions/workflows/ruff.yml)
+
 Automate the interfaces of various Ubiquiti products.
 
 ## Modules / Hardware Platforms:
