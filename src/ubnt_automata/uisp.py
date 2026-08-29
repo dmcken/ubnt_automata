@@ -151,16 +151,6 @@ urllib3.disable_warnings()
 
 
 @dataclasses.dataclass
-class UispGPS:
-    '''GPS fix as reported by a UISP-firmware device.'''
-    latitude: float
-    longitude: float
-    altitude_m: float
-    satellites: int
-    fix: bool
-
-
-@dataclasses.dataclass
 class UispPeer:
     '''One connected peer - the other client for a PtMP AP, or the
     single far end for a PtP link.
@@ -191,7 +181,7 @@ class UispPeer:
     rx_mcs_idx: int | None
     linkscore_dl: float | None
     linkscore_ul: float | None
-    gps: UispGPS | None
+    gps: airoscommon.GPSFix | None
 
 
 @dataclasses.dataclass
@@ -203,7 +193,7 @@ class UispDeviceStatus:
     uptime_seconds: int
     cpu_load_pct: float
     memory_used_pct: float
-    gps: UispGPS | None
+    gps: airoscommon.GPSFix | None
     peers: list[UispPeer]
 
 
@@ -220,6 +210,8 @@ class UispDevice(airoscommon.AirOSCommonDevice):
     deliberately no-ops here, never touching the device.
     '''
 
+    _url_path_prefix = 'api/v1.0/'
+
     def __init__(self, management_ip: str, timeout: int | None = None) -> None:
         '''Constructor'''
         super().__init__(
@@ -228,19 +220,6 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         )
         self._req_session = requests.Session()
         self._auth_token = None
-
-    def _build_url(self, path: str) -> str:
-        '''Build the final URL to pass to the request library.
-
-        Args:
-            - path: the path, relative to /api/v1.0/
-        '''
-        if self._is_ssl is None:
-            self._determine_ssl()
-
-        final_url = f"{'https' if self._is_ssl else 'http'}://"
-        final_url += f"{self._mgmt_ip}/api/v1.0/{path}"
-        return final_url
 
     def _origin_headers(self) -> dict:
         '''Origin/Referer headers matching this device's own base URL.
@@ -572,22 +551,8 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             uptime_seconds=device['uptime'],
             cpu_load_pct=cpu_avg,
             memory_used_pct=device['ram']['usage'],
-            gps=self._parse_gps(device.get('gps')),
+            gps=airoscommon.parse_gps_fix(device.get('gps')),
             peers=[self._parse_peer(p) for p in wireless.get('peers', [])],
-        )
-
-    @staticmethod
-    def _parse_gps(gps_data: dict | None) -> UispGPS | None:
-        '''Parse a GPS block, returning None if there's no fix.'''
-        if not gps_data or not gps_data.get('fix'):
-            return None
-
-        return UispGPS(
-            latitude=gps_data['lat'],
-            longitude=gps_data['lon'],
-            altitude_m=gps_data['alt'],
-            satellites=gps_data['sats'],
-            fix=gps_data['fix'],
         )
 
     def _parse_peer(self, peer: dict) -> UispPeer:
@@ -621,5 +586,5 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             rx_mcs_idx=mcs.get('rxIdx'),
             linkscore_dl=linkscore.get('dl'),
             linkscore_ul=linkscore.get('ul'),
-            gps=self._parse_gps(common.get('gps')),
+            gps=airoscommon.parse_gps_fix(common.get('gps')),
         )

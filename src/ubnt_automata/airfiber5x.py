@@ -87,7 +87,7 @@ import requests
 import urllib3
 
 # Local imports
-from . import airoscommon, exceptions
+from . import airoscommon, exceptions, utils
 
 logger = logging.getLogger(__name__)
 
@@ -98,16 +98,6 @@ _MODE_LABELS = {
     'ap-ptp': 'Master',
     'sta-ptp': 'Station',
 }
-
-
-@dataclasses.dataclass
-class AirFiberGPS:
-    '''GPS fix as reported by one end of an AirFiber link.'''
-    latitude: float
-    longitude: float
-    altitude_m: float
-    satellites: int
-    fix: int
 
 
 @dataclasses.dataclass
@@ -148,7 +138,7 @@ class AirFiberLinkEnd:
     tx_mcs: int
     capacity_mbps: int
     linkscore_pct: int
-    gps: AirFiberGPS | None
+    gps: airoscommon.GPSFix | None
 
     @property
     def mode_label(self) -> str:
@@ -198,19 +188,6 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         # From login's 'utoken' - not currently used by any implemented
         # endpoint, kept for the x-auth-token-gated endpoints noted above.
         self._auth_token = None
-
-    def _build_url(self, path: str):
-        '''Build the final URL to pass to the request library.
-
-        Args:
-            - path: the path
-        '''
-        if self._is_ssl is None:
-            self._determine_ssl()
-
-        final_url = f"{'https' if self._is_ssl else 'http'}://"
-        final_url += f"{self._mgmt_ip}/{path}"
-        return final_url
 
     def _get(self, path: str) -> requests.Response:
         '''Authenticated GET against a data endpoint.'''
@@ -311,18 +288,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         '''
         rez = self._get("getcfg.cgi")
 
-        cfg_data = {}
-        for curr_line in rez.text.split('\n'):
-            curr_line = curr_line.strip()
-            if not curr_line:
-                continue
-            try:
-                key, val = curr_line.split('=', 1)
-                cfg_data[key] = val
-            except ValueError:
-                logger.error(f"Unable to parse line: {curr_line}")
-
-        return cfg_data
+        return utils.parse_flat_kv_config(rez.text)
 
     def gethiststats(self) -> dict:
         """Get historical link stats (hist-stats.cgi).
@@ -442,18 +408,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         Returns:
             dict[str,str]: Board info key=value pairs.
         '''
-        board_data = {}
-        for curr_line in (self._dev_info or '').split('\n'):
-            curr_line = curr_line.strip()
-            if not curr_line:
-                continue
-            try:
-                key, val = curr_line.split('=', 1)
-                board_data[key] = val
-            except ValueError:
-                logger.error(f"Unable to parse line: {curr_line}")
-
-        return board_data
+        return utils.parse_flat_kv_config(self._dev_info or '')
 
     def get_discovery(self, duration_ms: int = 500) -> list[dict]:
         '''Broadcast-discover nearby Ubiquiti devices (discovery.cgi).
@@ -591,7 +546,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             tx_mcs=prs_local['tx_mcs'],
             capacity_mbps=self._normalize_capacity_mbps(prs_local['capacity']),
             linkscore_pct=prs_local['dl_linkscore'],
-            gps=self._parse_gps(status.get('gps')),
+            gps=airoscommon.parse_gps_fix(status.get('gps')),
         )
 
         remote_end = AirFiberLinkEnd(
@@ -612,7 +567,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             tx_mcs=prs_remote['tx_mcs'],
             capacity_mbps=self._normalize_capacity_mbps(prs_remote['capacity']),
             linkscore_pct=prs_local['ul_linkscore'],
-            gps=self._parse_gps(remote.get('gps')),
+            gps=airoscommon.parse_gps_fix(remote.get('gps')),
         )
 
         return local_end, remote_end
@@ -660,7 +615,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             tx_mcs=sta['tx_idx'],
             capacity_mbps=airmax['downlink_capacity'] // 1000,
             linkscore_pct=round(sta['dl_score']),
-            gps=self._parse_gps(status.get('gps')),
+            gps=airoscommon.parse_gps_fix(status.get('gps')),
         )
 
         remote_end = AirFiberLinkEnd(
@@ -681,30 +636,10 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             tx_mcs=remote.get('tx_mcs', sta['rx_idx']),
             capacity_mbps=airmax['uplink_capacity'] // 1000,
             linkscore_pct=round(sta['ul_score']),
-            gps=self._parse_gps(remote.get('gps')),
+            gps=airoscommon.parse_gps_fix(remote.get('gps')),
         )
 
         return local_end, remote_end
-
-    @staticmethod
-    def _parse_gps(gps_data: dict | None) -> AirFiberGPS | None:
-        '''Parse a GPS block, returning None if there's no fix.
-
-        Values come through as either numbers or numeric strings
-        depending on hardware generation and local/remote side - always
-        cast to float/int explicitly rather than trusting the source
-        type.
-        '''
-        if not gps_data or not gps_data.get('fix'):
-            return None
-
-        return AirFiberGPS(
-            latitude=float(gps_data['lat']),
-            longitude=float(gps_data['lon']),
-            altitude_m=float(gps_data['alt']),
-            satellites=int(gps_data['sats']),
-            fix=int(gps_data['fix']),
-        )
 
     @staticmethod
     def _mem_used_pct(totalram: int, freeram: int) -> float:

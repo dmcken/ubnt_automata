@@ -126,6 +126,35 @@ def determine_ssl(management_ip: str) -> bool:
 
     return is_ssl
 
+def parse_flat_kv_config(text: str) -> dict[str, str]:
+    '''Parse a flat newline-separated key=value config blob.
+
+    Shared by every .cgi-style device's config/boardinfo endpoints
+    (AirOSv8's getcfg.cgi, AirFiber's getcfg.cgi/get_boardinfo()) - all
+    use this exact same format. Blank lines (including a trailing one
+    from a final newline) are silently skipped rather than logged as a
+    parse failure, since they're a normal artifact of splitting on '\\n'
+    and not an actual malformed line.
+
+    Args:
+        text (str): Raw response body.
+
+    Returns:
+        dict[str, str]: Parsed key=value pairs, in file order.
+    '''
+    data = {}
+    for curr_line in text.split('\n'):
+        curr_line = curr_line.strip()
+        if not curr_line:
+            continue
+        try:
+            key, val = curr_line.split('=', 1)
+            data[key] = val
+        except ValueError:
+            logger.error(f"Unable to parse line: {curr_line}")
+
+    return data
+
 def parse_ubnt_version_string(version_string: str):
     '''Parse the full version string to its parts.
 

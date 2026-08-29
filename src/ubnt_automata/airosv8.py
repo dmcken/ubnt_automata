@@ -7,15 +7,13 @@ import http.client
 import json
 import logging
 import pprint
-import sys
-import traceback
 
 # External imports
 import requests
 import urllib3
 
 # Local imports
-from . import airoscommon, exceptions
+from . import airoscommon, exceptions, utils
 
 logger = logging.getLogger(__name__)
 
@@ -63,18 +61,29 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         self._dev_info   = None
         self._csrf_id    = None
 
-    def _build_url(self, path: str):
-        '''Build the final URL to pass to request library.
+    def _get(
+        self, path: str, params: dict | None = None, extra_headers: dict | None = None,
+    ) -> requests.Response:
+        '''Authenticated GET against a data endpoint.'''
+        return self._req_session.get(
+            self._build_url(path),
+            params=params,
+            verify=self._verify_ssl,
+            timeout=self._timeout,
+            headers={'X-CSRF-ID': self._csrf_id, **(extra_headers or {})},
+        )
 
-        Args:
-            - path: the path
-        '''
-        if self._is_ssl is None:
-            self._determine_ssl()
-
-        final_url = f"{'https' if self._is_ssl else 'http'}://"
-        final_url += f"{self._mgmt_ip}/{path}"
-        return final_url
+    def _post(
+        self, path: str, data=None, extra_headers: dict | None = None,
+    ) -> requests.Response:
+        '''Authenticated POST against a data endpoint.'''
+        return self._req_session.post(
+            self._build_url(path),
+            data=data,
+            verify=self._verify_ssl,
+            timeout=self._timeout,
+            headers={'X-CSRF-ID': self._csrf_id, **(extra_headers or {})},
+        )
 
     def login_http(self, curr_pw: str, curr_user:str | None = None) -> None:
         """Login to device via HTTP(s).
@@ -126,15 +135,8 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 requests.exceptions.JSONDecodeError # Likely not a Ubnt device
                 ) as exc:
             raise exceptions.DeviceUnavailable from exc
-        except Exception as exc:
-            logger.debug(
-                f"An exception occurred 'login_http' - {self._mgmt_ip}: " +
-                f"{exc.__class__} -> {exc}"
-            )
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            logger.debug(repr(
-                traceback.format_exception(exc_type, exc_value, exc_traceback)
-            ))
+        except Exception:
+            logger.debug(f"An exception occurred in login_http - {self._mgmt_ip}", exc_info=True)
             raise
 
     def change_password(self, new_password: str) -> None:
@@ -149,14 +151,10 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             'pwd': new_password,
             'oldPwd': old_password,
         }
-        rez = self._req_session.post(
-            self._build_url("pwd.cgi"),
+        rez = self._post(
+            "pwd.cgi",
             data=pw_data,
-            verify=self._verify_ssl,
-            headers = {
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'X-CSRF-ID': self._csrf_id,
-            }
+            extra_headers={'Accept': 'application/json, text/javascript, */*; q=0.01'},
         )
 
         try:
@@ -193,13 +191,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         Response of:
         {"countdown_started":0,"time_left":240,"active":1}
         '''
-        rez = self._req_session.get(
-            self._build_url("test_mode.cgi"),
-            verify=False,
-            headers = {
-                'X-CSRF-ID': self._csrf_id,
-            }
-        )
+        rez = self._get("test_mode.cgi")
 
         try:
             apply_result = rez.json()
@@ -218,25 +210,9 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
 
         '''
-        rez = self._req_session.get(
-            self._build_url("getcfg.cgi"),
-            verify=self._verify_ssl,
-            headers = {
-                'X-CSRF-ID': self._csrf_id,
-            }
-        )
+        rez = self._get("getcfg.cgi")
 
-        full_cfg = rez.text
-
-        cfg_data = {}
-        for curr_line in full_cfg.split('\n'):
-            try:
-                key,val = curr_line.strip().split('=',1)
-                cfg_data[key] = val
-            except ValueError:
-                logger.error(f"Unable to parse line: {curr_line}")
-
-        return cfg_data
+        return utils.parse_flat_kv_config(rez.text)
 
     def writecfg(self, cfgdata: dict[str,str]) -> None:
         """Write config to device.
@@ -263,14 +239,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             'cfgData': cfg_output,
             #'testmode': "yes"
         }
-        rez = self._req_session.post(
-            self._build_url("writecfg.cgi"),
-            data=cfg_data,
-            verify=self._verify_ssl,
-            headers = {
-                'X-CSRF-ID': self._csrf_id,
-            }
-        )
+        rez = self._post("writecfg.cgi", data=cfg_data)
 
         res_data = rez.json()
         if res_data['ok'] is True:
@@ -288,13 +257,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         Returns:
             dict: Status data.
         """
-        res = self._req_session.get(
-            self._build_url("status.cgi"),
-            verify=self._verify_ssl,
-            headers = {
-                'X-CSRF-ID': self._csrf_id,
-            }
-        )
+        res = self._get("status.cgi")
 
         if res.status_code == 200:
             return res.json()
@@ -311,13 +274,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         Returns:
             dict: Air View data.
         """
-        res = self._req_session.get(
-            self._build_url("airviewdata.cgi"),
-            verify=self._verify_ssl,
-            headers = {
-                'X-CSRF-ID': self._csrf_id,
-            }
-        )
+        res = self._get("airviewdata.cgi")
 
         if res.status_code == 200:
             return res.json()
@@ -338,12 +295,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             list[dict]: One entry per discovered device (hwaddr, ipv4,
                 hostname, product, uptime, wmode, fwversion, addresses).
         '''
-        res = self._req_session.post(
-            self._build_url("discovery.cgi"),
-            data={'discover': 'y', 'duration': 500},
-            verify=self._verify_ssl,
-            headers={'X-CSRF-ID': self._csrf_id},
-        )
+        res = self._post("discovery.cgi", data={'discover': 'y', 'duration': 500})
 
         if res.status_code == 200:
             return res.json().get('devices', [])
@@ -372,12 +324,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 channel/quality/signal_level/noise_level/encryption/
                 essid/...), empty if no scan has completed yet.
         '''
-        res = self._req_session.get(
-            self._build_url("survey.json.cgi"),
-            params={'iface': iface, 'update': 'last'},
-            verify=self._verify_ssl,
-            headers={'X-CSRF-ID': self._csrf_id},
-        )
+        res = self._get("survey.json.cgi", params={'iface': iface, 'update': 'last'})
 
         if res.status_code == 200:
             return res.json()
