@@ -26,9 +26,9 @@ class AirOSCommonDevice:
         '''
         self._mgmt_ip = management_ip
         if timeout is None:
-            self._timeout = timeout
-        else:
             self._timeout = self._default_timeout
+        else:
+            self._timeout = timeout
 
         self._curr_username = None
         self._curr_password = None  # Once we login successfully will contain the current password

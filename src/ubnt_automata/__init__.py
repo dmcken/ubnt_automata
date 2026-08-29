@@ -6,6 +6,7 @@
 from . import exceptions
 
 # Classes
+from .airfiber5x import AirFiber
 from .airosv8 import AirOSv8
 from .airosv6 import AirOSv6
 from .utils import determine_device_type, parse_ubnt_version_string
@@ -16,6 +17,7 @@ from .utils import determine_device_type, parse_ubnt_version_string
 __version__ = "0.0.7"
 
 __all__ = [
+    'AirFiber',
     'AirOSv6',
     'AirOSv8',
     'determine_device_type',
