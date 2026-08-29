@@ -1,9 +1,17 @@
-'''UISP Wave AP implementation.
+'''UISP Wave device implementation.
 
-A completely different API family from AirOS/AirFiber - a modern JSON
-REST API under /api/v1.0/, not .cgi endpoints. Verified live against a
-real Wave AP (WAVE-APR, fw GMC.ipq5018...), cross-referenced against a
-captured HAR of the live web UI session.
+Covers the whole Wave hardware family (AP, Pro, Nano, LR, ...) and both
+operating modes (PtMP access point or PtP link) - all confirmed to
+share the exact same API and JSON shape (statistics.wireless.peers is
+just length 1 for a PtP link instead of many for an AP's connected
+clients). Verified live against a real Wave AP (product "Wave AP",
+model Wave-AP, fw GMC.ipq5018...) acting as an access point, and a real
+Wave Pro (product "Wave Pro", model Wave-Pro, fw MGMP.ipq807x...) acting
+as one end of a PtP backhaul, each cross-referenced against a captured
+HAR of its own live web UI session.
+
+This is a completely different API family from AirOS/AirFiber - a
+modern JSON REST API under /api/v1.0/, not .cgi endpoints.
 
 Auth:
 - POST /api/v1.0/user/login, JSON body {"username":..., "password":...}.
@@ -16,11 +24,13 @@ Confirmed endpoints (all need x-auth-token except public/device):
 - public/device                     - Pre-auth device identification
                                        (product/model/mac/family). No
                                        login required at all.
-- statistics                        - Rich JSON: this AP's own device
-                                       info (gps/cpu/ram/uptime/
+- statistics                        - Rich JSON: this device's own info
+                                       (gps/cpu/ram/uptime/
                                        temperatures), its radios, and
-                                       one entry per connected PtMP
-                                       client/peer (identification,
+                                       one entry per connected peer -
+                                       the other AP client(s) for a
+                                       PtMP AP, or the single far end
+                                       for a PtP link (identification,
                                        gps, distance, signal/mcs/
                                        linkScore for both link
                                        directions).
@@ -28,7 +38,7 @@ Confirmed endpoints (all need x-auth-token except public/device):
 - system/alerts                     - Device alerts/warnings list.
 - tools/discovery/neighbors (POST)  - Network-wide Ubiquiti device
                                        discovery (broader than just
-                                       this AP's own PtMP peers).
+                                       this device's own peers).
 - tools/site-survey/main            - Site survey status only
                                        ({"status":"not_started"} when
                                        idle) - fetch-only, deliberately
@@ -36,7 +46,14 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        changes wireless behaviour on
                                        the device, same reasoning as
                                        not poking AirFiber's
-                                       airviewdata.cgi).
+                                       airviewdata.cgi). Confirmed
+                                       working live on both a Wave AP
+                                       and a PtP-configured Wave Pro,
+                                       even though the latter's web UI
+                                       never actually called it (that's
+                                       just the nav hiding the page for
+                                       PtP mode - the endpoint itself
+                                       works regardless).
 - tools/compose (POST)              - Batches many GET routes into one
                                        call: {"requests":[{"method":
                                        "GET","route": "/public/device"},
@@ -100,19 +117,20 @@ class WaveGPS:
 
 @dataclasses.dataclass
 class WavePeer:
-    '''One PtMP client/peer connected to this Wave AP.
+    '''One connected peer - the other client for a PtMP AP, or the
+    single far end for a PtP link.
 
-    signal/mcs/linkscore are from the AP's ("local") perspective of the
-    link to this peer, taken from whichever of peer['local'] is
+    signal/mcs/linkscore are from this device's ("local") perspective
+    of the link to the peer, taken from whichever of peer['local'] is
     actually connected (matched by its own 'connected' flag rather than
     assuming list order/position, since a peer could in principle be
     tracked against more than one radio).
 
-    linkscore_dl/linkscore_ul follow the same dl=AP-side/ul=client-side
-    convention empirically confirmed on AirFiber, but this pairing has
-    NOT been separately confirmed for Wave (no screenshots to cross-
-    check against, only the HAR) - treat as a reasonable assumption,
-    not a verified fact.
+    linkscore_dl/linkscore_ul follow the same dl=this-device-side/
+    ul=peer-side convention empirically confirmed on AirFiber, but this
+    pairing has NOT been separately confirmed for Wave (no screenshots
+    to cross-check against, only HARs) - treat as a reasonable
+    assumption, not a verified fact.
     '''
     hostname: str
     product: str
@@ -132,9 +150,10 @@ class WavePeer:
 
 
 @dataclasses.dataclass
-class WaveAPStatus:
-    '''Structured view of a Wave AP's own status and all connected peers
-    (statistics).'''
+class WaveStatus:
+    '''Structured view of a Wave device's own status and all connected
+    peers (statistics). For a PtP link, `peers` will have exactly one
+    entry - the far end.'''
     hostname: str
     uptime_seconds: int
     cpu_load_pct: float
@@ -143,8 +162,9 @@ class WaveAPStatus:
     peers: list[WavePeer]
 
 
-class WaveAP(airoscommon.AirOSCommonDevice):
-    '''UISP Wave AP device handler.
+class Wave(airoscommon.AirOSCommonDevice):
+    '''UISP Wave device handler - covers the whole Wave family (AP, Pro,
+    Nano, LR, ...) in either PtMP (access point) or PtP (link) mode.
 
     Read-only for now: change_password()/apply_changes() are
     deliberately no-ops here, never touching the device.
@@ -262,10 +282,11 @@ class WaveAP(airoscommon.AirOSCommonDevice):
     def getstatistics(self) -> dict:
         '''Get the device's raw statistics (statistics).
 
-        The richest endpoint - the AP's own info (gps/cpu/ram/uptime),
-        its radios, and per-peer link stats. Only ever observed to
-        return a single-element list (this device's own reading) -
-        that single entry is returned directly, not the wrapping list.
+        The richest endpoint - this device's own info (gps/cpu/ram/
+        uptime), its radios, and per-peer link stats. Only ever
+        observed to return a single-element list (this device's own
+        reading) - that single entry is returned directly, not the
+        wrapping list.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
@@ -316,7 +337,7 @@ class WaveAP(airoscommon.AirOSCommonDevice):
     def get_discovery(self) -> list[dict]:
         '''Network-wide Ubiquiti device discovery (tools/discovery/neighbors).
 
-        Broader than just this AP's own PtMP peers - returns whatever
+        Broader than just this device's own peers - returns whatever
         Ubiquiti gear responds to discovery on the local segment.
 
         Raises:
@@ -338,6 +359,8 @@ class WaveAP(airoscommon.AirOSCommonDevice):
         Deliberately never triggers a scan - only reports current
         status (e.g. {"status": "not_started"}) - starting one changes
         the device's wireless behaviour, out of scope for fetch-only.
+        Confirmed working on both a Wave AP and a PtP-configured Wave
+        Pro.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
@@ -408,8 +431,9 @@ class WaveAP(airoscommon.AirOSCommonDevice):
                 )
         return result
 
-    def get_ap_status(self) -> WaveAPStatus:
-        '''Structured view of this AP's own status and all connected peers.
+    def get_status(self) -> WaveStatus:
+        '''Structured view of this device's own status and all connected
+        peers. For a PtP link, `peers` will have exactly one entry.
 
         statistics doesn't include this device's own configured
         hostname (only its peers' hostnames) - fetched separately via
@@ -420,7 +444,7 @@ class WaveAP(airoscommon.AirOSCommonDevice):
                 expected fields.
 
         Returns:
-            WaveAPStatus: Structured AP + peer link status.
+            WaveStatus: Structured device + peer link status.
         '''
         stats = self.getstatistics()
         device = stats['device']
@@ -435,7 +459,7 @@ class WaveAP(airoscommon.AirOSCommonDevice):
             if cpu_cores else 0.0
         )
 
-        return WaveAPStatus(
+        return WaveStatus(
             hostname=system_info.get('hostname', ''),
             uptime_seconds=device['uptime'],
             cpu_load_pct=cpu_avg,
@@ -463,7 +487,7 @@ class WaveAP(airoscommon.AirOSCommonDevice):
         common = peer['common']
         identification = common['identification']
 
-        # Match the AP-side link entry to whichever one is actually
+        # Match the local-side link entry to whichever one is actually
         # connected - don't assume list order/position.
         local_links = peer.get('local', [])
         active_link = next(

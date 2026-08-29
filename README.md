@@ -5,7 +5,7 @@ Automate the interfaces of various Ubiquiti products.
 - AirOSv8
 - AirOS (pre-v8) - Planned
 - AirFiber (fetch-only - verified against a real AirFiber 60 HD)
-- Wave AP (fetch-only - verified against a real Wave AP)
+- Wave - AP and PtP link modes (fetch-only - verified against a real Wave AP and a real Wave Pro)
 - EdgeRouter - Planned
 - EdgeSwitch - Planned
 - EdgePower - Planned
