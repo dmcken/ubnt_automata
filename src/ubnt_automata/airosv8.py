@@ -37,6 +37,9 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
       exact role is unconfirmed - possibly what actually keeps a scan
       running in the background. Not implemented, since the plain HTTP
       endpoint already returns real data without it.
+    - get_gps() added - status.cgi's top-level `gps` block, same shape
+      as AirFiber's (used for the tower/site GPS a device with built-in
+      GPS can report, not to be confused with per-peer GPS on a link).
 
     To implement:
     - /chanlist_active.cfg
@@ -264,6 +267,19 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         # Something went wrong.
         raise RuntimeError(f"Error fetching status: {res.text}")
+
+    def get_gps(self) -> airoscommon.GPSFix | None:
+        '''This device's own GPS location (status.cgi's top-level `gps`
+        block) - confirmed live on a real Rocket Prism 5AC Gen2. None if
+        the device has no GPS fix (or no GPS hardware at all).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            airoscommon.GPSFix | None: This device's GPS location.
+        '''
+        return airoscommon.parse_gps_fix(self.getstatus().get('gps'))
 
     def getairview(self) -> dict:
         """Get Air View data.

@@ -3,7 +3,7 @@ helpers (added in the dedup pass, replacing 8 inline header blocks),
 and the shared flat key=value config parser.'''
 import pytest
 
-from ubnt_automata import exceptions
+from ubnt_automata import airoscommon, exceptions
 from ubnt_automata.airosv8 import AirOSv8
 
 
@@ -199,3 +199,41 @@ class TestGetDiscovery:
         assert sent.method == 'POST'
         assert 'discover=y' in sent.text
         assert 'duration=500' in sent.text
+
+
+class TestGetGps:
+    def test_returns_gps_fix(self, requests_mock):
+        requests_mock.get(
+            'http://192.0.2.1/status.cgi',
+            json={'gps': {'lat': -33.36753, 'lon': 148.016417, 'alt': 260.5,
+                           'sats': 11, 'fix': 1}},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        gps = dev.get_gps()
+
+        assert gps == airoscommon.GPSFix(
+            latitude=-33.36753, longitude=148.016417, altitude_m=260.5,
+            satellites=11, fix=1,
+        )
+
+    def test_no_fix_returns_none(self, requests_mock):
+        requests_mock.get(
+            'http://192.0.2.1/status.cgi',
+            json={'gps': {'lat': 0, 'lon': 0, 'alt': 0, 'sats': 0, 'fix': False}},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        assert dev.get_gps() is None
+
+    def test_no_gps_key_at_all_returns_none(self, requests_mock):
+        requests_mock.get('http://192.0.2.1/status.cgi', json={})
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        assert dev.get_gps() is None

@@ -278,3 +278,22 @@ class TestGetStatus:
         status = dev.get_status()
 
         assert status.cpu_load_pct == 0.0
+
+
+class TestGetGps:
+    def test_returns_the_devices_own_gps(self, load_json):
+        stats = load_json('uisp_statistics_wireless.json')
+        dev = UispDevice('192.0.2.1')
+        dev.getstatistics = lambda: stats[0]
+
+        gps = dev.get_gps()
+
+        assert gps.latitude == 50.111111
+        assert gps.fix == 1
+
+    def test_no_fix_returns_none(self, load_json):
+        stats = load_json('uisp_statistics_power.json')  # gps: null
+        dev = UispDevice('192.0.2.1')
+        dev.getstatistics = lambda: stats[0]
+
+        assert dev.get_gps() is None

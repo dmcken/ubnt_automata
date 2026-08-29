@@ -280,6 +280,22 @@ class AirFiber(airoscommon.AirOSCommonDevice):
 
         raise RuntimeError(f"Error fetching status: {res.status_code} {res.text}")
 
+    def get_gps(self) -> airoscommon.GPSFix | None:
+        '''This device's own GPS location (status.cgi's top-level `gps`
+        block) - this is the local end's own site GPS, distinct from
+        get_link_status()'s per-end `gps` (which reports the same
+        top-level block for the local end and the remote end's own
+        block for the far end of the link). None if the device has no
+        GPS fix (or no GPS hardware at all).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            airoscommon.GPSFix | None: This device's GPS location.
+        '''
+        return airoscommon.parse_gps_fix(self.getstatus().get('gps'))
+
     def getcfg(self) -> dict[str, str]:
         '''Get the device configuration (getcfg.cgi).
 

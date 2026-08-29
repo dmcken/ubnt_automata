@@ -364,6 +364,20 @@ class UispDevice(airoscommon.AirOSCommonDevice):
 
         raise RuntimeError(f"Error fetching statistics: {res.status_code} {res.text}")
 
+    def get_gps(self) -> airoscommon.GPSFix | None:
+        '''This device's own GPS location (statistics' `device.gps`
+        block) - works on any product line, including EdgePower (unlike
+        get_status(), which assumes a wireless link). None if the
+        device has no GPS fix (or no GPS hardware at all).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            airoscommon.GPSFix | None: This device's GPS location.
+        '''
+        return airoscommon.parse_gps_fix(self.getstatistics().get('device', {}).get('gps'))
+
     def gethistorical(self) -> list:
         '''Get historical statistics (statistics/historical).
 

@@ -168,3 +168,21 @@ class TestConfigParsing:
     def test_get_boardinfo_before_login_returns_empty_dict(self):
         dev = AirFiber('192.0.2.1')
         assert dev.get_boardinfo() == {}
+
+
+class TestGetGps:
+    def test_returns_the_devices_own_gps(self, load_json):
+        dev = _device_with_status(load_json('airfiber_status_60ghz.json'))
+
+        gps = dev.get_gps()
+
+        assert gps.latitude == 10.1
+        assert gps.longitude == 20.2
+        assert gps.fix == 1
+
+    def test_no_fix_returns_none(self, load_json):
+        status = load_json('airfiber_status_60ghz.json')
+        status['gps'] = None
+        dev = _device_with_status(status)
+
+        assert dev.get_gps() is None
