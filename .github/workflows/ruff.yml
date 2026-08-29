@@ -18,4 +18,4 @@ jobs:
         pip install -e .
     - name: Analysing the code with ruff
       run: |
-        ruff check $(git ls-files '*.py')
+        ruff check .
