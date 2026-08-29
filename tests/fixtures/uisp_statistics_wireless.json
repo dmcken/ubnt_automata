@@ -1,0 +1,61 @@
+[
+  {
+    "device": {
+      "uptime": 654321,
+      "cpu": [{"usage": 10}, {"usage": 20}],
+      "ram": {"usage": 35},
+      "gps": {
+        "lat": 50.111111,
+        "lon": 60.222222,
+        "alt": 100.5,
+        "sats": 9,
+        "fix": true
+      }
+    },
+    "wireless": {
+      "peers": [
+        {
+          "common": {
+            "hostname": "test-peer-1",
+            "identification": {
+              "product": "Wave Pro",
+              "model": "Wave-Pro",
+              "mac": "aa:bb:cc:dd:ee:01",
+              "firmwareVersion": "MGMP.v1.0.0"
+            },
+            "mgmtIp": "192.0.2.10",
+            "uptime": 600000,
+            "distance": 5000,
+            "gps": {
+              "lat": 50.333333,
+              "lon": 60.444444,
+              "alt": 90.2,
+              "sats": 8,
+              "fix": true
+            }
+          },
+          "local": [
+            {
+              "connected": false,
+              "linkQuality": {
+                "signal": -70,
+                "idealSignal": -65,
+                "mcs": {"txIdx": 1, "rxIdx": 1},
+                "linkScore": {"dl": 50.0, "ul": 50.0}
+              }
+            },
+            {
+              "connected": true,
+              "linkQuality": {
+                "signal": -60,
+                "idealSignal": -58,
+                "mcs": {"txIdx": 9, "rxIdx": 9},
+                "linkScore": {"dl": 95.5, "ul": 93.2}
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

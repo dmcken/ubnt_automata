@@ -14,6 +14,17 @@ Automate the interfaces of various Ubiquiti products.
 
 See [INSTALL](INSTALL.md)
 
+## Running tests
+
+Tests are pure unit tests (no live devices touched) - HTTP calls are
+mocked with `requests-mock`, and status/statistics JSON parsing is
+exercised against synthetic fixtures under `tests/fixtures/` shaped to
+match real captures this package has been verified against.
+
+```sh
+uv sync --group dev  # or: pip install -e .[test]
+uv run pytest        # or: pytest
+```
 
 ## Examples
 

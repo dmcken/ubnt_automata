@@ -1,0 +1,68 @@
+{
+  "host": {
+    "hostname": "test-af5xhd-local",
+    "devmodel": "airFiber 5XHD",
+    "fwversion": "AF5X.v1.5.6",
+    "uptime": 90000,
+    "cpuload": 15,
+    "totalram": 262144,
+    "freeram": 120000
+  },
+  "wireless": {
+    "apmac": "00:11:22:44:44:55",
+    "mode": "ap-ptp",
+    "sta": [
+      {
+        "mac": "00:11:22:44:44:66",
+        "distance": 8056,
+        "signal": -55,
+        "rssi": 40,
+        "noisefloor": -95,
+        "idealpwr0": -50,
+        "idealpwr1": -52,
+        "tx_idx": 3,
+        "rx_idx": 4,
+        "dl_score": 92.5,
+        "ul_score": 88.2,
+        "airmax": {
+          "downlink_capacity": 193280,
+          "uplink_capacity": 49152,
+          "combined_capacity": 242432
+        },
+        "remote": {
+          "hostname": "test-af5xhd-remote",
+          "platform": "airFiber 5XHD",
+          "version": "AF5X.v1.5.6",
+          "uptime": 89000,
+          "cpuload": 14,
+          "totalram": 262144,
+          "freeram": 118000,
+          "mode": "sta-ptp",
+          "signal": -56,
+          "rssi": 41,
+          "idealpwr0": -51,
+          "idealpwr1": -53,
+          "tx_mcs": 5,
+          "gps": {
+            "lat": 30.333333,
+            "lon": 40.444444,
+            "alt": 246.8,
+            "sats": 11,
+            "fix": 1
+          }
+        }
+      }
+    ],
+    "stats": {
+      "tx_throughput": 193,
+      "rx_throughput": 49
+    }
+  },
+  "gps": {
+    "lat": 30.300000,
+    "lon": 40.400000,
+    "alt": 325.6,
+    "sats": 10,
+    "fix": 1
+  }
+}

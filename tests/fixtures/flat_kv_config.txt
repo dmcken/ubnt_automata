@@ -1,0 +1,7 @@
+radio.0.psk=fake-psk-not-a-real-secret
+radio.0.mode=ap-ptp
+resolv.host.1.status=enabled
+
+wireless.1.mac_acl.status=disabled
+unms.uri=http://example.invalid/unms
+

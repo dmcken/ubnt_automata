@@ -1,0 +1,14 @@
+[
+  {
+    "device": {
+      "uptime": 111111,
+      "cpu": [{"usage": 5}],
+      "ram": {"usage": 12},
+      "gps": null
+    },
+    "power": {
+      "voltage": 54.2,
+      "current": 1.3
+    }
+  }
+]

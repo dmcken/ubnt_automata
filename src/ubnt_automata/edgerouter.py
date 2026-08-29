@@ -96,19 +96,6 @@ class EdgeRouter(airoscommon.AirOSCommonDevice):
         )
         self._req_session = requests.Session()
 
-    def _build_url(self, path: str) -> str:
-        '''Build the final URL to pass to the request library.
-
-        Args:
-            - path: the path, relative to the site root.
-        '''
-        if self._is_ssl is None:
-            self._determine_ssl()
-
-        final_url = f"{'https' if self._is_ssl else 'http'}://"
-        final_url += f"{self._mgmt_ip}/{path}"
-        return final_url
-
     def _get(self, path: str, params: dict | None = None) -> requests.Response:
         '''Authenticated GET against a data endpoint.'''
         return self._req_session.get(

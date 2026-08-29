@@ -1,0 +1,55 @@
+{
+  "host": {
+    "hostname": "test-af60lr-local",
+    "devmodel": "airFiber 60 LR",
+    "fwversion": "AF60LR.v1.4.0",
+    "uptime": 50000,
+    "cpuload": 8,
+    "totalram": 262144,
+    "freeram": 150000
+  },
+  "wireless": {
+    "apmac": "00:11:22:33:55:55",
+    "mode": "ap-ptp",
+    "distance": 0,
+    "sta": [
+      {
+        "mac": "00:11:22:33:55:66",
+        "prs_sta": {
+          "rssi_data": -45,
+          "dl_signal_expect": -44,
+          "ul_signal_expect": -43,
+          "snr": 42,
+          "rx_mcs": 12,
+          "tx_mcs": 12,
+          "capacity": 1951000,
+          "dl_linkscore": 99,
+          "ul_linkscore": 98,
+          "distance": 291
+        },
+        "remote": {
+          "hostname": "test-af60lr-remote",
+          "platform": "airFiber 60 LR",
+          "version": "AF60LR.v1.4.0",
+          "uptime": 49000,
+          "cpuload": 9,
+          "totalram": 262144,
+          "freeram": 145000,
+          "mode": "sta-ptp",
+          "prs_remote": {
+            "rssi_data": -46,
+            "snr": 41,
+            "tx_mcs": 12,
+            "capacity": 1951000
+          },
+          "gps": null
+        }
+      }
+    ],
+    "throughput": {
+      "tx": 1951,
+      "rx": 1951
+    }
+  },
+  "gps": null
+}
