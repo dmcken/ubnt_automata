@@ -63,6 +63,7 @@ auth-token pattern seen elsewhere in this package, e.g. uisp.py's
 services.unms.key). Callers must not log/print the full get_config()
 dict.
 '''
+from __future__ import annotations
 
 # System imports
 import logging
@@ -72,8 +73,7 @@ import requests
 import urllib3
 
 # Local imports
-from . import airoscommon
-from . import exceptions
+from . import airoscommon, exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class EdgeRouter(airoscommon.AirOSCommonDevice):
     deliberately no-ops here, never touching the device.
     '''
 
-    def __init__(self, management_ip: str, timeout: int = None) -> None:
+    def __init__(self, management_ip: str, timeout: int | None = None) -> None:
         '''Constructor'''
         super().__init__(
             management_ip=management_ip,
@@ -109,7 +109,7 @@ class EdgeRouter(airoscommon.AirOSCommonDevice):
         final_url += f"{self._mgmt_ip}/{path}"
         return final_url
 
-    def _get(self, path: str, params: dict = None) -> requests.Response:
+    def _get(self, path: str, params: dict | None = None) -> requests.Response:
         '''Authenticated GET against a data endpoint.'''
         return self._req_session.get(
             self._build_url(path),
@@ -118,7 +118,7 @@ class EdgeRouter(airoscommon.AirOSCommonDevice):
             timeout=self._timeout,
         )
 
-    def login_http(self, curr_pw: str, curr_user: str = None) -> None:
+    def login_http(self, curr_pw: str, curr_user: str | None = None) -> None:
         """Login to device via HTTP(s).
 
         Args:

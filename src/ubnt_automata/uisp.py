@@ -131,6 +131,7 @@ Callers must not log/print these values. Unlike AirOS's getcfg(),
 system/users here does NOT include password data (just username/
 readOnly/sshKeys).
 '''
+from __future__ import annotations
 
 # System imports
 import dataclasses
@@ -141,8 +142,7 @@ import requests
 import urllib3
 
 # Local imports
-from . import airoscommon
-from . import exceptions
+from . import airoscommon, exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ class UispDevice(airoscommon.AirOSCommonDevice):
     deliberately no-ops here, never touching the device.
     '''
 
-    def __init__(self, management_ip: str, timeout: int = None) -> None:
+    def __init__(self, management_ip: str, timeout: int | None = None) -> None:
         '''Constructor'''
         super().__init__(
             management_ip=management_ip,
@@ -278,7 +278,7 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             headers={'x-auth-token': self._auth_token, **self._origin_headers()},
         )
 
-    def login_http(self, curr_pw: str, curr_user: str = None) -> None:
+    def login_http(self, curr_pw: str, curr_user: str | None = None) -> None:
         """Login to device via HTTP(s).
 
         Args:

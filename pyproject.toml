@@ -142,3 +142,29 @@ package-data = {"sample" = ["*.dat"]}
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+# Legacy dead code kept for historical purposes only (see its own module
+# docstring) - not linted, matching the pylint disables it carried before.
+extend-exclude = ["src/ubnt_automata/airosv6.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "RUF",  # ruff-specific rules
+    "FA",   # flake8-future-annotations
+    "LOG",  # flake8-logging
+]

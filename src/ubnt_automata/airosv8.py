@@ -1,5 +1,6 @@
 '''Ubnt v8 handler.
 '''
+from __future__ import annotations
 
 # System imports
 import http.client
@@ -14,9 +15,7 @@ import requests
 import urllib3
 
 # Local imports
-from . import airoscommon
-from . import exceptions
-
+from . import airoscommon, exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +53,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
     upgradeDevice
     '''
 
-    def __init__(self, management_ip: str, timeout: int = None) -> None:
+    def __init__(self, management_ip: str, timeout: int | None = None) -> None:
         '''Constructor'''
         super().__init__(
             management_ip=management_ip,
@@ -77,7 +76,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         final_url += f"{self._mgmt_ip}/{path}"
         return final_url
 
-    def login_http(self, curr_pw: str, curr_user:str = None) -> None:
+    def login_http(self, curr_pw: str, curr_user:str | None = None) -> None:
         """Login to device via HTTP(s).
 
         Args:

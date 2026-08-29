@@ -1,13 +1,12 @@
 '''Base class for common functions for all Ubnt AirOS devices'''
+from __future__ import annotations
 
 # System imports
 import abc
 import logging
 
 # Local imports
-from . import exceptions
-from . import utils
-
+from . import exceptions, utils
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ class AirOSCommonDevice:
     _default_timeout = 30
     _verify_ssl = False
 
-    def __init__(self, management_ip: str, timeout: int = None):
+    def __init__(self, management_ip: str, timeout: int | None = None):
         '''Constructor
         '''
         self._mgmt_ip = management_ip
@@ -34,7 +33,7 @@ class AirOSCommonDevice:
         self._curr_password = None  # Once we login successfully will contain the current password
         self._is_ssl = None
 
-    def login(self, passwords: list[str], username: str = None, auto_apply: bool = False):
+    def login(self, passwords: list[str], username: str | None = None, auto_apply: bool = False):
         '''Login to the device.
         '''
         if username is None:
@@ -84,7 +83,7 @@ class AirOSCommonDevice:
         return utils.parse_ubnt_version_string(version_string=version_string)
 
     @abc.abstractmethod
-    def login_http(self, curr_pw:str, curr_user:str = None):
+    def login_http(self, curr_pw:str, curr_user:str | None = None):
         '''Login to device via HTTP.'''
 
     @abc.abstractmethod

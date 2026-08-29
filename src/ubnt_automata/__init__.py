@@ -7,12 +7,11 @@ from . import exceptions
 
 # Classes
 from .airfiber5x import AirFiber
-from .airosv8 import AirOSv8
 from .airosv6 import AirOSv6
+from .airosv8 import AirOSv8
 from .edgerouter import EdgeRouter
 from .uisp import UispDevice
 from .utils import determine_device_type, parse_ubnt_version_string
-
 
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/

@@ -108,18 +108,18 @@ def determine_ssl(management_ip: str) -> bool:
             f"Unable to reach {management_ip}") from exc
     except (urllib3.exceptions.ConnectTimeoutError,
             urllib3.exceptions.HTTPError,
-            socket.error, socket.timeout) as exc:
+            OSError, socket.timeout) as exc:
         # 113 - No route to host (Linux)
         # 10060 - Windows
         if exc.__class__.__name__ in ['timeout', 'BadStatusLine'] or\
              exc.errno in [10060, 113]:
             raise exceptions.DeviceUnavailable(
-                f"Unable to reach {management_ip}")
+                f"Unable to reach {management_ip}") from exc
         raise
 
     location_parse = urllib.parse.urlparse(rez.url)
     if location_parse.scheme == 'https':
-        logging.debug("SSL found")
+        logger.debug("SSL found")
         is_ssl = True
     else:
         is_ssl = False
