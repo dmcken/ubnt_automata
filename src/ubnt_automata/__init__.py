@@ -9,6 +9,7 @@ from . import exceptions
 from .airfiber5x import AirFiber
 from .airosv8 import AirOSv8
 from .airosv6 import AirOSv6
+from .wave import WaveAP
 from .utils import determine_device_type, parse_ubnt_version_string
 
 
@@ -20,6 +21,7 @@ __all__ = [
     'AirFiber',
     'AirOSv6',
     'AirOSv8',
+    'WaveAP',
     'determine_device_type',
     'exceptions',
     'parse_ubnt_version_string',

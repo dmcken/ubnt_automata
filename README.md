@@ -4,7 +4,8 @@ Automate the interfaces of various Ubiquiti products.
 ## Modules / Hardware Platforms:
 - AirOSv8
 - AirOS (pre-v8) - Planned
-- AirFiber - Planned
+- AirFiber (fetch-only - verified against a real AirFiber 60 HD)
+- Wave AP (fetch-only - verified against a real Wave AP)
 - EdgeRouter - Planned
 - EdgeSwitch - Planned
 - EdgePower - Planned
