@@ -1,11 +1,14 @@
 '''AirFiber implementation.
 
 Shares the same auth/session mechanism as AirOSv8 (/api/auth, X-CSRF-ID
-header). Verified live against both a real airFiber 60 HD (AF60HD, fw
-v1.2.4, 60GHz) and a real airFiber 5XHD (AF-5XHD, fw v1.5.6, 5GHz) -
-the two use meaningfully different status.cgi shapes for the wireless
-link (see get_link_status()), but everything else (auth, getcfg(),
-discovery.cgi, ...) is identical between them.
+header). Verified live against a real airFiber 60 HD (AF60HD, fw
+v1.2.4, 60GHz), a real airFiber 5XHD (AF-5XHD, fw v1.5.6, 5GHz), and a
+real airFiber 60 LR (AF60-LR, 60GHz). The 5GHz/AirMax generation uses a
+meaningfully different status.cgi shape for the wireless link, and even
+within the 60GHz/PRS generation the AF60-LR moves the link distance to
+a different location than the AF60HD (see get_link_status()) - but
+everything else (auth, getcfg(), discovery.cgi, ...) is identical
+across all three.
 
 Auth endpoint:
 - /api/auth
@@ -489,10 +492,20 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         the device reports zero or more than one station, since this
         hasn't been observed/verified against real hardware.
 
-        Branches on hardware generation, confirmed live against both:
+        Branches on hardware generation, confirmed live against all
+        three:
         - 60GHz/PRS (AF60HD): link stats live under sta['prs_sta'] /
           sta['remote']['prs_remote'], and total throughput is at
-          wireless.throughput.{tx,rx}.
+          wireless.throughput.{tx,rx}. distance_m comes from
+          sta['distance'].
+        - 60GHz/PRS (AF60-LR): same prs_sta shape as AF60HD, but
+          distance_m instead lives at prs_sta.distance (sta has no
+          'distance' key at all on this model, and the top-level
+          wireless.distance also exists but was observed stuck at 0 -
+          seemingly unused/stale on this model - so it's only used as
+          a last-resort fallback, tried after prs_sta.distance).
+          capacity also turned out to be in different units on this
+          model - see _parse_60ghz_ends().
         - 5GHz/AirMax (AF5XHD): link stats are directly on sta /
           sta['remote'] (no prs_* wrapper) - this generation doesn't
           have wireless.throughput at all, so falls back to
@@ -529,8 +542,14 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             throughput_tx_raw = stats.get('tx_throughput')
             throughput_rx_raw = stats.get('rx_throughput')
 
+        distance_m = (
+            sta.get('distance')
+            or sta.get('prs_sta', {}).get('distance')
+            or status['wireless'].get('distance')
+        )
+
         return AirFiberLinkStatus(
-            distance_m=sta['distance'],
+            distance_m=distance_m,
             local=local_end,
             remote=remote_end,
             throughput_tx_raw=throughput_tx_raw,
@@ -541,7 +560,16 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         self, status: dict, sta: dict, remote: dict,
     ) -> tuple[AirFiberLinkEnd, AirFiberLinkEnd]:
         '''Build (local, remote) AirFiberLinkEnd for a PRS-based (60GHz,
-        e.g. AF60HD) status.cgi.'''
+        e.g. AF60HD) status.cgi.
+
+        prs_sta['capacity'] turned out to not be consistently scaled
+        across models: AF60HD reports it already in Mbps (e.g. 924),
+        but AF60-LR reports it in Kbps (e.g. 1951000). There's no
+        reliable field alongside it to detect which scale is in use,
+        so this is normalized with a physical-limits heuristic instead
+        (see _normalize_capacity_mbps()) rather than trusting the raw
+        value as-is.
+        '''
         prs_local = sta['prs_sta']
         prs_remote = remote['prs_remote']
 
@@ -561,7 +589,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             snr_db=prs_local['snr'],
             rx_mcs=prs_local['rx_mcs'],
             tx_mcs=prs_local['tx_mcs'],
-            capacity_mbps=prs_local['capacity'],
+            capacity_mbps=self._normalize_capacity_mbps(prs_local['capacity']),
             linkscore_pct=prs_local['dl_linkscore'],
             gps=self._parse_gps(status.get('gps')),
         )
@@ -582,7 +610,7 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             snr_db=prs_remote['snr'],
             rx_mcs=prs_local['tx_mcs'],
             tx_mcs=prs_remote['tx_mcs'],
-            capacity_mbps=prs_remote['capacity'],
+            capacity_mbps=self._normalize_capacity_mbps(prs_remote['capacity']),
             linkscore_pct=prs_local['ul_linkscore'],
             gps=self._parse_gps(remote.get('gps')),
         )
@@ -683,3 +711,20 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         '''Memory used, as a percentage - status.cgi only gives total/free
         bytes, not a ready-made percentage (the UI computes this too).'''
         return (totalram - freeram) / totalram * 100
+
+    @staticmethod
+    def _normalize_capacity_mbps(raw_capacity: int) -> int:
+        '''Normalize prs_sta/prs_remote['capacity'] to Mbps.
+
+        Confirmed live that this field's own unit isn't consistent
+        across models - AF60HD reports Mbps directly (e.g. 924),
+        AF60-LR reports Kbps (e.g. 1951000, i.e. 1951 Mbps). No other
+        field reliably distinguishes the two, so this uses a physical-
+        limits heuristic instead: no current AirFiber 60GHz product
+        exceeds ~10 Gbps of one-directional capacity, so anything
+        larger than that (expressed in Mbps) must actually be Kbps.
+        '''
+        mbps_upper_bound = 10_000
+        if raw_capacity > mbps_upper_bound:
+            return raw_capacity // 1000
+        return raw_capacity
