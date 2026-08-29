@@ -2,21 +2,25 @@
 
 Covers every Ubiquiti device confirmed running this generation of
 firmware, regardless of product line - the Wave family (AP, Pro, Nano,
-LR, ...) in either PtMP (access point) or PtP (link) mode, and now also
-an AirFiber 60 XR (product "airFiber 60 XR", family "airfiber-60") -
-all confirmed to share the exact same API and JSON shape
-(statistics.wireless.peers is just length 1 for a PtP link instead of
-many for an AP's connected clients). This was originally written as
-"wave.py"/class Wave before the AF60-XR turned up using byte-for-byte
-the same API despite being AirFiber-branded, at which point it was
-generalized and renamed to reflect the underlying firmware rather than
-any one product line.
+LR, ...) in either PtMP (access point) or PtP (link) mode, an AirFiber
+60 XR (product "airFiber 60 XR", family "airfiber-60"), and the
+EdgePower family (family "EdgePower" - 24V-72W/54V-72W/54V-150W all
+confirmed) - all confirmed to share the exact same auth mechanism and
+generic tooling (public/device, discovery, compose, alerts), though
+EdgePower's own statistics/device data is naturally power/battery-
+focused rather than wireless-link-focused, so get_status() (which
+assumes a wireless link) only makes sense for the wireless product
+lines. This was originally written as "wave.py"/class Wave before the
+AF60-XR turned up using byte-for-byte the same API despite being
+AirFiber-branded, at which point it was generalized and renamed to
+reflect the underlying firmware rather than any one product line.
 
 Verified live against a real Wave AP (product "Wave AP", model
 Wave-AP, fw GMC.ipq5018...) acting as an access point, a real Wave Pro
 (product "Wave Pro", model Wave-Pro, fw MGMP.ipq807x...) acting as one
-end of a PtP backhaul, and a real AirFiber 60 XR (model AF60-XR) also
-acting as one end of a PtP backhaul - each cross-referenced against a
+end of a PtP backhaul, a real AirFiber 60 XR (model AF60-XR) also
+acting as one end of a PtP backhaul, and three real EdgePower units
+(EP-54V-72W, EP-54V-150W, EP-24V-72W) - each cross-referenced against a
 captured HAR of its own live web UI session.
 
 This is a completely different API family from AirOS/AirFiber - a
@@ -35,19 +39,32 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        login required at all.
 - statistics                        - Rich JSON: this device's own info
                                        (gps/cpu/ram/uptime/
-                                       temperatures), its radios, and
-                                       one entry per connected peer -
-                                       the other AP client(s) for a
+                                       temperatures). For wireless
+                                       product lines, also its radios
+                                       and one entry per connected peer
+                                       - the other AP client(s) for a
                                        PtMP AP, or the single far end
                                        for a PtP link (identification,
                                        gps, distance, signal/mcs/
                                        linkScore for both link
-                                       directions).
+                                       directions). EdgePower's
+                                       statistics is power/battery-
+                                       focused instead - get_status()
+                                       only makes sense for wireless
+                                       devices, but getstatistics() (raw)
+                                       works fine on EdgePower too.
 - statistics/historical             - Historical stat samples.
 - system/alerts                     - Device alerts/warnings list.
 - tools/discovery/neighbors (POST)  - Network-wide Ubiquiti device
                                        discovery (broader than just
-                                       this device's own peers).
+                                       this device's own peers). See
+                                       get_discovery()'s docstring for
+                                       an EdgePower-specific wrinkle
+                                       (GET also works, and results mix
+                                       in raw LLDP neighbor entries).
+- tools/mac-table                   - MAC/ARP table - confirmed on
+                                       EdgePower, not tried on the
+                                       wireless product lines.
 - tools/site-survey/main            - Site survey status only
                                        ({"status":"not_started"} when
                                        idle) - fetch-only, deliberately
@@ -175,8 +192,11 @@ class UispDeviceStatus:
 class UispDevice(airoscommon.AirOSCommonDevice):
     '''UISP-firmware device handler - covers every product line
     confirmed running this firmware generation (Wave AP/Pro/Nano/LR,
-    AirFiber 60 XR, ...) in either PtMP (access point) or PtP (link)
-    mode.
+    AirFiber 60 XR, EdgePower) in either PtMP (access point) or PtP
+    (link) mode, or - for EdgePower - as a plain power device with no
+    wireless link at all (don't call get_status()/get_site_survey_status()
+    against those; get_mac_table()/get_discovery()/get_public_device()/
+    getstatistics() work fine on any of them).
 
     Read-only for now: change_password()/apply_changes() are
     deliberately no-ops here, never touching the device.
@@ -350,7 +370,14 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         '''Network-wide Ubiquiti device discovery (tools/discovery/neighbors).
 
         Broader than just this device's own peers - returns whatever
-        Ubiquiti gear responds to discovery on the local segment.
+        Ubiquiti gear responds to discovery on the local segment. Uses
+        POST (confirmed on Wave/AirFiber-XR, matching AirFiber's own
+        discovery.cgi), but this endpoint accepts GET too - confirmed
+        live on an EdgePower, whose own web UI calls it that way. On
+        EdgePower this list also mixes in raw LLDP neighbor entries
+        (protocol=LLDP, only localInterfaceID/mac/remoteInterfaceID/age -
+        no hostname/product/ip) alongside the usual UBNT-protocol
+        entries, for any non-Ubiquiti neighbor gear.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
@@ -364,6 +391,28 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             return res.json()
 
         raise RuntimeError(f"Error fetching discovery data: {res.status_code} {res.text}")
+
+    def get_mac_table(self) -> list[dict]:
+        '''Get the MAC/ARP table (tools/mac-table).
+
+        Confirmed live on EdgePower devices - lists MAC+IP pairs (IPv4
+        and IPv6) seen per physical port, i.e. this is the closest
+        equivalent to an ARP table this API exposes.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            list[dict]: One entry per learned MAC/IP pair - {"port":
+                {"id", "name", "mac", "macOverride", "type"}, "mac",
+                "address", "lastReachable"}.
+        '''
+        res = self._get("tools/mac-table")
+
+        if res.status_code == 200:
+            return res.json()
+
+        raise RuntimeError(f"Error fetching MAC table: {res.status_code} {res.text}")
 
     def get_site_survey_status(self) -> dict:
         '''Site survey status only (tools/site-survey/main).
