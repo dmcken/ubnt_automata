@@ -27,26 +27,28 @@ urllib3.disable_warnings()
 class AirOSv8(airoscommon.AirOSCommonDevice):
     '''Ubnt version 8 equipment handler.
 
+    Confirmed live against a real Rocket Prism 5AC (fw v8.7.x):
+    - getdiscovery()/getsurvey() added - same discovery.cgi mechanism
+      as AirFiber, and survey.json.cgi (fetch-only, never triggers a
+      new scan - see getsurvey()'s docstring).
+    - getairview() was already working correctly as-is on this device -
+      no query params (cmd=get_data/fastmode=yes) turned out to be
+      required, a plain GET returns the same data either way. The web
+      UI also opens a /ws/airview WebSocket (cookie-authenticated, a
+      different auth mechanism to the X-CSRF-ID header everything else
+      here uses) whose messages weren't captured in the HAR, so its
+      exact role is unconfirmed - possibly what actually keeps a scan
+      running in the background. Not implemented, since the plain HTTP
+      endpoint already returns real data without it.
 
     To implement:
-    - /test_mode.cgi
-    - /airviewdata.cgi
     - /chanlist_active.cfg
-    - /survey.json.cgi?iface=ath0&update=last - Site survey
     - /amdata.cgi
 
 
     To implement:
     loginSSH
-    changePassword
-    applyChanges
-    discardChanges
     reboot
-    fetchState
-    fetchConfig
-    fetchConfigHTTP
-    fetchConfigSSH
-    fetchSiteSurvey
     changeParameterHTTP
     changeParameterSSH
     upgradeDevice
@@ -322,8 +324,66 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             return res.json()
 
         # Something went wrong.
-        raise RuntimeError(f"Error fetching status: {res.text}")
+        raise RuntimeError(f"Error fetching airview data: {res.text}")
 
+    def getdiscovery(self) -> list[dict]:
+        '''Broadcast-discover nearby Ubiquiti devices (discovery.cgi).
+
+        Confirmed via a captured HAR of a real session - same
+        discovery.cgi mechanism as AirFiber (POST discover=y&duration=500).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            list[dict]: One entry per discovered device (hwaddr, ipv4,
+                hostname, product, uptime, wmode, fwversion, addresses).
+        '''
+        res = self._req_session.post(
+            self._build_url("discovery.cgi"),
+            data={'discover': 'y', 'duration': 500},
+            verify=self._verify_ssl,
+            headers={'X-CSRF-ID': self._csrf_id},
+        )
+
+        if res.status_code == 200:
+            return res.json().get('devices', [])
+
+        raise RuntimeError(f"Error fetching discovery data: {res.text}")
+
+    def getsurvey(self, iface: str = 'ath0') -> dict:
+        '''Get the latest wireless site survey results (survey.json.cgi).
+
+        Only ever fetches the latest already-known results/status
+        (update=last) - deliberately never triggers a new scan (that's
+        the same request with an empty `update` param instead, observed
+        in a captured HAR - starting one changes the radio's channel-
+        hopping behaviour, out of scope for fetch-only).
+
+        Args:
+            iface (str, optional): Wireless interface to survey.
+                Defaults to 'ath0' (this device's only radio).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            dict: {"scan_status": ..., "scan_data": [...]} - scan_data
+                is a list of nearby BSSes (cell/mac/mode/frequency/
+                channel/quality/signal_level/noise_level/encryption/
+                essid/...), empty if no scan has completed yet.
+        '''
+        res = self._req_session.get(
+            self._build_url("survey.json.cgi"),
+            params={'iface': iface, 'update': 'last'},
+            verify=self._verify_ssl,
+            headers={'X-CSRF-ID': self._csrf_id},
+        )
+
+        if res.status_code == 200:
+            return res.json()
+
+        raise RuntimeError(f"Error fetching site survey data: {res.text}")
 
     def enable_debug(self) -> None:
         '''Enable debugging'''
