@@ -1387,16 +1387,18 @@ wheels = [
 name = "ubnt-automata"
 source = { editable = "." }
 dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "paramiko" },
     { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "requests", version = "2.34.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-    { name = "spur" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "check-manifest" },
+]
+legacy = [
+    { name = "beautifulsoup4" },
+    { name = "paramiko" },
+    { name = "spur" },
 ]
 test = [
     { name = "coverage", version = "7.10.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -1417,16 +1419,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4" },
+    { name = "beautifulsoup4", marker = "extra == 'legacy'" },
     { name = "check-manifest", marker = "extra == 'dev'" },
     { name = "coverage", marker = "extra == 'test'" },
-    { name = "paramiko" },
+    { name = "paramiko", marker = "extra == 'legacy'" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "requests" },
     { name = "requests-mock", marker = "extra == 'test'" },
-    { name = "spur" },
+    { name = "spur", marker = "extra == 'legacy'" },
 ]
-provides-extras = ["dev", "test"]
+provides-extras = ["dev", "legacy", "test"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -95,10 +95,7 @@ classifiers = [  # Optional
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [
-    "beautifulsoup4",
     "requests",
-    "paramiko",
-    "spur",
 ]
 
 # List additional groups of dependencies here (e.g. development
@@ -112,6 +109,12 @@ dependencies = [
 [project.optional-dependencies] # Optional
 dev = ["check-manifest"]
 test = ["pytest", "requests-mock", "coverage"]
+# Only needed for AirOSv6 (airosv6.py) - the frozen/historical SSH-based
+# device classes (UbntDevice/UbntSM/UbntAP). Every actively-maintained
+# class (AirOSv8, AirFiber, UispDevice, EdgeRouter) is HTTP-only via
+# `requests` alone - kept as an extra so consumers of this package
+# aren't forced onto spur's old paramiko<4 pin just to import it.
+legacy = ["beautifulsoup4", "paramiko", "spur"]
 
 # List URLs that are relevant to your project
 #
