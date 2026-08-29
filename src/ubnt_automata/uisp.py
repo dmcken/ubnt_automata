@@ -19,8 +19,10 @@ Verified live against a real Wave AP (product "Wave AP", model
 Wave-AP, fw GMC.ipq5018...) acting as an access point, a real Wave Pro
 (product "Wave Pro", model Wave-Pro, fw MGMP.ipq807x...) acting as one
 end of a PtP backhaul, a real AirFiber 60 XR (model AF60-XR) also
-acting as one end of a PtP backhaul, and three real EdgePower units
-(EP-54V-72W, EP-54V-150W, EP-24V-72W) - each cross-referenced against a
+acting as one end of a PtP backhaul, three real EdgePower units
+(EP-54V-72W, EP-54V-150W, EP-24V-72W), and a real EdgePoint S16 running
+upgraded firmware that self-identifies as "EdgeSwitch S16"
+(family "EdgeSwitch", model EP-S16) - each cross-referenced against a
 captured HAR of its own live web UI session.
 
 This is a completely different API family from AirOS/AirFiber - a
@@ -32,6 +34,16 @@ Auth:
   header IS the credential for every subsequent request (send back as
   the same header on each call). No cookies observed for this API at
   all.
+- IMPORTANT: an EdgeSwitch/EdgePoint S16 was confirmed to reject login
+  with a lighttpd-level 403 Forbidden (no JSON body at all) unless the
+  request carries Origin/Referer headers matching the device's own
+  base URL - this looks exactly like a brute-force lockout at a
+  glance (and was initially misdiagnosed as one against a different
+  S16), but isn't: the identical request with these two headers added
+  succeeds immediately, even against a device that had never been
+  logged into before. Wave/AirFiber-XR/EdgePower all worked fine
+  without them. _origin_headers() now adds them to every request
+  unconditionally (harmless for devices that don't require them).
 
 Confirmed endpoints (all need x-auth-token except public/device):
 - public/device                     - Pre-auth device identification
@@ -224,13 +236,30 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         final_url += f"{self._mgmt_ip}/api/v1.0/{path}"
         return final_url
 
+    def _origin_headers(self) -> dict:
+        '''Origin/Referer headers matching this device's own base URL.
+
+        Not needed by most UISP-firmware devices (Wave/AirFiber-XR/
+        EdgePower all worked fine without them), but confirmed live
+        that an EdgeSwitch/EdgePoint S16 enforces an Origin/Referer
+        check as a CSRF safeguard, at least on login - a request
+        without them gets a lighttpd-level 403 Forbidden (looks like a
+        brute-force lockout at a glance, but isn't one: the same
+        request with these headers added succeeds immediately, even
+        against a device never logged into before). Sending them
+        unconditionally is harmless for devices that don't require
+        them.
+        '''
+        base = self._build_url("").rsplit('/api/v1.0/', maxsplit=1)[0]
+        return {'Origin': base, 'Referer': f"{base}/"}
+
     def _get(self, path: str) -> requests.Response:
         '''Authenticated GET against a data endpoint.'''
         return self._req_session.get(
             self._build_url(path),
             verify=self._verify_ssl,
             timeout=self._timeout,
-            headers={'x-auth-token': self._auth_token},
+            headers={'x-auth-token': self._auth_token, **self._origin_headers()},
         )
 
     def _post(self, path: str, json_body=None) -> requests.Response:
@@ -240,7 +269,7 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             json=json_body,
             verify=self._verify_ssl,
             timeout=self._timeout,
-            headers={'x-auth-token': self._auth_token},
+            headers={'x-auth-token': self._auth_token, **self._origin_headers()},
         )
 
     def login_http(self, curr_pw: str, curr_user: str = None) -> None:
@@ -263,13 +292,16 @@ class UispDevice(airoscommon.AirOSCommonDevice):
                 json={'username': curr_user, 'password': curr_pw},
                 verify=self._verify_ssl,
                 timeout=self._timeout,
+                headers=self._origin_headers(),
             )
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.ConnectTimeout) as exc:
             raise exceptions.DeviceUnavailable from exc
 
         if rez.status_code != 200:
-            logger.debug(f"Error logging in to {self._mgmt_ip}: {rez.status_code}")
+            logger.debug(
+                f"Error logging in to {self._mgmt_ip}: {rez.status_code} {rez.text[:200]}"
+            )
             raise exceptions.WrongPassword()
 
         # Successful login - save the parameters
@@ -304,6 +336,7 @@ class UispDevice(airoscommon.AirOSCommonDevice):
             self._build_url("public/device"),
             verify=self._verify_ssl,
             timeout=self._timeout,
+            headers=self._origin_headers(),
         )
 
         if res.status_code == 200:
