@@ -173,6 +173,56 @@ class TestDetermineDeviceType:
             status_code=200,
             headers={},
         )
+        requests_mock.get('http://192.0.2.1/api/v1.0/public/device', status_code=404)
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 0
+
+    def test_uisp_firmware_public_device(self, requests_mock):
+        '''Wave AP/Pro/Nano/LR, AirFiber 60 XR, EdgePower, and newer-
+        firmware EdgePoint switches all share this pre-auth device-
+        identification endpoint -- checked once AirOSv8/v6 have both
+        already been ruled out.
+        '''
+        requests_mock.get('http://192.0.2.1/', status_code=200)
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+        requests_mock.get(
+            'http://192.0.2.1/api/v1.0/public/device',
+            json={'product': 'Wave AP', 'model': 'Wave-AP', 'family': 'wave'},
+        )
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 9
+        assert result.model_name == 'Wave AP'
+
+    def test_uisp_public_device_unreachable_falls_back_to_unknown(self, requests_mock):
+        import requests as requests_lib
+        requests_mock.get('http://192.0.2.1/', status_code=200)
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+        requests_mock.get(
+            'http://192.0.2.1/api/v1.0/public/device',
+            exc=requests_lib.exceptions.ConnectionError,
+        )
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 0
+
+    def test_older_edgepoint_firmware_401_falls_back_to_unknown(self, requests_mock):
+        '''An EdgePoint S16 running older firmware was confirmed to
+        401 on public/device even pre-login -- not universal, so this
+        one case can't be identified without a working password,
+        which this function deliberately never tries.
+        '''
+        requests_mock.get('http://192.0.2.1/', status_code=200)
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+        requests_mock.get(
+            'http://192.0.2.1/api/v1.0/public/device',
+            status_code=401,
+            text='Unauthorized',
+        )
 
         result = utils.determine_device_type('192.0.2.1')
 

@@ -1,4 +1,5 @@
 '''Utility functions'''
+from __future__ import annotations
 
 # System imports
 import dataclasses
@@ -31,6 +32,8 @@ class UbntDeviceInfo:
     # 0 - Unknown
     # 6 - AirOSv6 style kit
     # 8 - AirOSv8 style kit
+    # 9 - UISP-firmware (Wave AP/Pro/Nano/LR, AirFiber 60 XR, EdgePower,
+    #     newer-firmware EdgePoint switches like the S16)
     model_group: int = 0
     # Model name if known, empty string if not
     model_name: str = ''
@@ -43,6 +46,14 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
     '''Determine device type.
 
     Connect to a CPE and determine as much information as possible.
+    Tries, in order: AirOSv8's JSON info endpoint, AirOSv6's login
+    redirect, then UISP-firmware's pre-auth public/device endpoint
+    (Wave AP/Pro/Nano/LR, AirFiber 60 XR, EdgePower, newer-firmware
+    EdgePoint) -- see UispDevice's own docstring for that firmware
+    family. Not universal even then: an EdgePoint S16 running older
+    firmware was confirmed to 401 on public/device pre-login, so it
+    can't be identified without already having a working password,
+    which this function deliberately never attempts.
 
     Args:
         - management_ip: str - IP address
@@ -74,14 +85,49 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
         device_json = r_api.json()
         device_data.model_name = device_json['product_name']
         device_data.model_group = 8
-    elif urlparse(r_api.url).path[:10] == '/login.cgi':
+        return device_data
+
+    if urlparse(r_api.url).path[:10] == '/login.cgi':
         # This is most likely an AirOSv6 device.
         device_data.model_group = 6
-    else:
-        # We don't know, debug and handle any new devices
-        device_data.model_group = 0
+        return device_data
 
+    uisp_device = _probe_uisp_public_device(base_url)
+    if uisp_device is not None:
+        # {"product": "Wave AP", "model": "Wave-AP", "family": "wave"}
+        device_data.model_name = uisp_device.get('product', '')
+        device_data.model_group = 9
+        return device_data
+
+    # We don't know, debug and handle any new devices
+    device_data.model_group = 0
     return device_data
+
+
+def _probe_uisp_public_device(base_url: str) -> dict | None:
+    '''UISP-firmware's pre-auth device identification, or None if this
+    isn't one (wrong API entirely, or the rare older-EdgePoint-
+    firmware case that 401s here pre-login).
+    '''
+    try:
+        response = requests.get(
+            f"{base_url}/api/v1.0/public/device",
+            timeout=10,
+            allow_redirects=True,
+            verify=False,
+        )
+    except requests.exceptions.RequestException:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    try:
+        device_json = response.json()
+    except ValueError:
+        return None
+
+    return device_json if isinstance(device_json, dict) and 'product' in device_json else None
 
 def determine_ssl(management_ip: str) -> bool:
     '''Determine if the management interface has SSL enforced.
