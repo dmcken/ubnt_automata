@@ -94,7 +94,8 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
 
     uisp_device = _probe_uisp_public_device(base_url)
     if uisp_device is not None:
-        # {"product": "Wave AP", "model": "Wave-AP", "family": "wave"}
+        # the "identification" object looks like {"product": "Wave
+        # Long-Range", "model": "Wave-LR", "family": "wave", "mac": ...}
         device_data.model_name = uisp_device.get('product', '')
         device_data.model_group = 9
         return device_data
@@ -105,9 +106,12 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
 
 
 def _probe_uisp_public_device(base_url: str) -> dict | None:
-    '''UISP-firmware's pre-auth device identification, or None if this
-    isn't one (wrong API entirely, or the rare older-EdgePoint-
-    firmware case that 401s here pre-login).
+    '''UISP-firmware's pre-auth device identification (its
+    "identification" object), or None if this isn't one (wrong API
+    entirely, or the rare older-EdgePoint-firmware case that 401s here
+    pre-login). Confirmed live against a real Wave Long-Range: the
+    fields are nested one level down under "identification", not at
+    the response's top level.
     '''
     try:
         response = requests.get(
@@ -127,7 +131,15 @@ def _probe_uisp_public_device(base_url: str) -> dict | None:
     except ValueError:
         return None
 
-    return device_json if isinstance(device_json, dict) and 'product' in device_json else None
+    if not isinstance(device_json, dict):
+        return None
+
+    identification = device_json.get('identification')
+    return (
+        identification
+        if isinstance(identification, dict) and 'product' in identification
+        else None
+    )
 
 def determine_ssl(management_ip: str) -> bool:
     '''Determine if the management interface has SSL enforced.

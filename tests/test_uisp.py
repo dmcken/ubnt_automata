@@ -111,16 +111,22 @@ class TestGetDiscovery:
 
 class TestGetPublicDevice:
     def test_pre_auth_no_token_needed(self, requests_mock):
+        '''Confirmed live against a real Wave Long-Range: the fields
+        are nested one level down under "identification", not at the
+        response's top level.
+        '''
         requests_mock.get(
             'https://192.0.2.1/api/v1.0/public/device',
-            json={'product': 'Wave AP', 'model': 'Wave-AP', 'family': 'wave'},
+            json={'identification': {
+                'product': 'Wave AP', 'model': 'Wave-AP', 'family': 'wave',
+            }},
         )
         dev = UispDevice('192.0.2.1')
         dev._is_ssl = True
 
         result = dev.get_public_device()
 
-        assert result['product'] == 'Wave AP'
+        assert result['identification']['product'] == 'Wave AP'
 
     def test_older_edgepoint_firmware_401_raises(self, requests_mock):
         requests_mock.get(

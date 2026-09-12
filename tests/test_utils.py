@@ -189,13 +189,34 @@ class TestDetermineDeviceType:
         requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
         requests_mock.get(
             'http://192.0.2.1/api/v1.0/public/device',
-            json={'product': 'Wave AP', 'model': 'Wave-AP', 'family': 'wave'},
+            json={'identification': {
+                'product': 'Wave AP', 'model': 'Wave-AP', 'family': 'wave',
+            }},
         )
 
         result = utils.determine_device_type('192.0.2.1')
 
         assert result.model_group == 9
         assert result.model_name == 'Wave AP'
+
+    def test_uisp_flat_shape_is_not_mistaken_for_the_real_nested_one(self, requests_mock):
+        '''Regression: a real Wave Long-Range was confirmed live to
+        nest identification fields one level down under
+        "identification" - {"product": ...} at the top level (which
+        an earlier version of this function, and this library's own
+        test fixture, wrongly assumed) is not what a real device sends
+        and must not be mistaken for it.
+        '''
+        requests_mock.get('http://192.0.2.1/', status_code=200)
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+        requests_mock.get(
+            'http://192.0.2.1/api/v1.0/public/device',
+            json={'product': 'Wave AP', 'model': 'Wave-AP', 'family': 'wave'},
+        )
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 0
 
     def test_uisp_public_device_unreachable_falls_back_to_unknown(self, requests_mock):
         import requests as requests_lib
