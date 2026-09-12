@@ -68,7 +68,7 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
     device_data = UbntDeviceInfo(web_ssl=is_ssl)
 
     # If we get a valid JSON object
-    if r_api.headers['Content-Type'] == 'application/json; charset=utf-8':
+    if r_api.headers.get('Content-Type') == 'application/json; charset=utf-8':
         # The json from an AirOSv8 device looks like this
         # {"setup_complete":true,"ui_lang":"en_US","product_name":"LiteBeam 5AC"}
         device_json = r_api.json()
@@ -103,7 +103,12 @@ def determine_ssl(management_ip: str) -> bool:
             verify=False,
             timeout=30,
         )
-    except requests.exceptions.ConnectTimeout as exc:
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
+        # ConnectionError covers what actually reaches this level for a
+        # closed/filtered port (e.g. "No route to host", "Connection
+        # refused") - requests wraps the underlying urllib3/OSError
+        # itself before it gets here, so catching those directly (as
+        # the except clause below does) doesn't see this case.
         raise exceptions.DeviceUnavailable(
             f"Unable to reach {management_ip}") from exc
     except (urllib3.exceptions.ConnectTimeoutError,

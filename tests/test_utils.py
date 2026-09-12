@@ -130,6 +130,21 @@ class TestDetermineSsl:
         with pytest.raises(exceptions.DeviceUnavailable):
             utils.determine_ssl('192.0.2.1')
 
+    def test_connection_error_raises_device_unavailable(self, requests_mock):
+        '''requests.exceptions.ConnectionError (e.g. "No route to host",
+        "Connection refused") is what a real closed/filtered port
+        actually raises through requests/urllib3 - it isn't an OSError
+        or urllib3.exceptions.* by the time it reaches this function,
+        so the except clause further down never saw it (regression:
+        a live sweep of ~400 devices treated every one of these as a
+        crash instead of DeviceUnavailable).
+        '''
+        import requests as requests_lib
+        requests_mock.get('http://192.0.2.1/', exc=requests_lib.exceptions.ConnectionError)
+
+        with pytest.raises(exceptions.DeviceUnavailable):
+            utils.determine_ssl('192.0.2.1')
+
 
 class TestDetermineDeviceType:
     def test_airosv8_json_response(self, requests_mock):
@@ -145,6 +160,23 @@ class TestDetermineDeviceType:
         assert result.model_group == 8
         assert result.model_name == 'LiteBeam 5AC'
         assert result.web_ssl is False
+
+    def test_missing_content_type_header_does_not_crash(self, requests_mock):
+        '''Some devices respond to /api/info/public with no Content-Type
+        header at all (regression: this used to KeyError on
+        headers['Content-Type'] instead of falling through to
+        model_group 0, and hit ~1 in 6 devices in a live sweep).
+        '''
+        requests_mock.get('http://192.0.2.1/', status_code=200)
+        requests_mock.get(
+            'http://192.0.2.1/api/info/public',
+            status_code=200,
+            headers={},
+        )
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 0
 
     def test_airosv6_login_redirect(self, requests_mock):
         requests_mock.get('http://192.0.2.1/', status_code=200)
