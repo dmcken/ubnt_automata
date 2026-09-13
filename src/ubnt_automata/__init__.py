@@ -24,7 +24,7 @@ except ImportError:
 
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     'AirFiber',

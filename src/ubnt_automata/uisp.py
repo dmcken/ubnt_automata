@@ -213,7 +213,19 @@ class UispDevice(airoscommon.AirOSCommonDevice):
     getstatistics() work fine on any of them).
 
     Read-only for now: change_password()/apply_changes() are
-    deliberately no-ops here, never touching the device.
+    deliberately no-ops here, never touching the device. Unlike
+    AirFiber (see its module docstring), there's no known-equivalent
+    endpoint to reuse for these - system/users (readable via
+    compose()) confirmed live to NOT include password data, and no
+    HAR evidence has been captured yet of the actual write call this
+    firmware's own web UI makes to change a user's password. Wiring
+    these up needs that endpoint confirmed live first, the same way
+    every read method in this class already was - deliberately left
+    as no-ops rather than guessed at, since AirOSCommonDevice.login()'s
+    own retry path calls change_password() on every successful non-
+    primary-password login, so a wrong guess here wouldn't just fail
+    quietly, it would break login() itself for every UISP-firmware
+    device that logs in on anything but its first saved password.
     '''
 
     _url_path_prefix = 'api/v1.0/'

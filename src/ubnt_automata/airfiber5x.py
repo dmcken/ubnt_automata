@@ -80,7 +80,9 @@ from __future__ import annotations
 
 # System imports
 import dataclasses
+import json
 import logging
+import pprint
 
 # External imports
 import requests
@@ -172,8 +174,13 @@ class AirFiberLinkStatus:
 class AirFiber(airoscommon.AirOSCommonDevice):
     '''AirFiber device handler.
 
-    Read-only for now: change_password()/apply_changes() are
-    deliberately no-ops here, never touching the device.
+    change_password()/apply_changes()/writecfg() mirror AirOSv8's
+    exactly (pwd.cgi/test_mode.cgi/writecfg.cgi), on the strength of
+    this module's own docstring confirming the auth mechanism is
+    shared byte-for-byte - but unlike everything else in this class,
+    they have NOT been independently confirmed live against real
+    AirFiber hardware yet. Treat them as scaffolding to build on, not
+    verified-safe writes.
     '''
 
     def __init__(self, management_ip: str, timeout: int | None = None) -> None:
@@ -198,6 +205,18 @@ class AirFiber(airoscommon.AirOSCommonDevice):
             headers={
                 'X-CSRF-ID': self._csrf_id,
             },
+        )
+
+    def _post(
+        self, path: str, data=None, extra_headers: dict | None = None,
+    ) -> requests.Response:
+        '''Authenticated POST against a data endpoint.'''
+        return self._req_session.post(
+            self._build_url(path),
+            data=data,
+            verify=self._verify_ssl,
+            timeout=self._timeout,
+            headers={'X-CSRF-ID': self._csrf_id, **(extra_headers or {})},
         )
 
     def login_http(self, curr_pw: str, curr_user: str | None = None) -> None:
@@ -249,16 +268,83 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         self._csrf_id = rez.headers['X-CSRF-ID']
 
     def change_password(self, new_password: str) -> None:
-        '''No-op for now - fetch-only, never modifies the device.'''
-        logger.debug(
-            f"change_password() called on {self._mgmt_ip} but is a no-op - not implemented yet"
+        '''Change the current user's password (pwd.cgi).
+
+        Mirrors AirOSv8.change_password() exactly - same endpoint,
+        same payload shape - on the strength of this module's own
+        docstring confirming AirFiber shares AirOSv8's auth mechanism
+        byte-for-byte. NOT independently confirmed live yet against
+        real AirFiber hardware; treat as scaffolding to build on, not
+        a verified-safe write.
+        '''
+        old_password = self._curr_password
+
+        pw_data = {
+            'change': 'yes',
+            'ro': '0',
+            'pwd': new_password,
+            'oldPwd': old_password,
+        }
+        rez = self._post(
+            "pwd.cgi",
+            data=pw_data,
+            extra_headers={'Accept': 'application/json, text/javascript, */*; q=0.01'},
         )
 
+        try:
+            change_result = rez.json()
+
+            if change_result['success'] is True:
+                return
+
+            logger.error(f"Error changing password: {change_result}")
+        except json.decoder.JSONDecodeError:
+            logger.error(f"Error decoding json in change password: {rez.content}")
+
     def apply_changes(self, test_mode=False) -> None:
-        '''No-op for now - fetch-only, never modifies the device.'''
-        logger.debug(
-            f"apply_changes() called on {self._mgmt_ip} but is a no-op - not implemented yet"
-        )
+        '''Apply pending changes (test_mode.cgi).
+
+        Mirrors AirOSv8.apply_changes() exactly - see change_password()'s
+        docstring for why, and the same "not independently confirmed
+        live" caveat applies here too.
+        '''
+        rez = self._get("test_mode.cgi")
+
+        try:
+            apply_result = rez.json()
+
+            if apply_result['active'] in [0, 1]:
+                return
+
+            logger.error(f"Error apply changes: {apply_result}")
+        except json.decoder.JSONDecodeError:
+            logger.error(f"Error decoding json in apply changes: {rez.content}")
+
+    def writecfg(self, cfgdata: dict[str, str]) -> None:
+        '''Write config to the device (writecfg.cgi).
+
+        Mirrors AirOSv8.writecfg() exactly - same caveat as
+        change_password(): not independently confirmed live yet.
+
+        Args:
+            cfgdata: Config to set on the device, in the same flat
+                key=value shape getcfg() returns.
+        '''
+        lines = [f"{key}={value}" for key, value in cfgdata.items()]
+        logger.debug(f"Writecfg lines: {pprint.pformat(lines)}")
+        cfg_output = "\r\n".join(lines)
+
+        rez = self._post("writecfg.cgi", data={'cfgData': cfg_output})
+
+        try:
+            write_result = rez.json()
+
+            if write_result['ok'] is True:
+                return
+
+            logger.error(f"Error writing config: {write_result}")
+        except json.decoder.JSONDecodeError:
+            logger.error(f"Error decoding json in writecfg: {rez.content}")
 
     def getstatus(self) -> dict:
         """Get the device status (status.cgi).

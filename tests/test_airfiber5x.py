@@ -186,3 +186,66 @@ class TestGetGps:
         dev = _device_with_status(status)
 
         assert dev.get_gps() is None
+
+
+class TestChangePassword:
+    '''Mirrors AirOSv8's own TestChangePassword exactly - same
+    endpoint/payload, since this is explicitly the same mechanism
+    (see the module docstring). Not confirmed live yet.'''
+
+    def test_success_sends_old_and_new_password(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/pwd.cgi', json={'success': True})
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+        dev._curr_password = 'old-password'
+
+        dev.change_password('new-password')
+
+        sent = requests_mock.request_history[0]
+        assert 'oldPwd=old-password' in sent.text
+        assert 'pwd=new-password' in sent.text
+
+    def test_device_reported_failure_is_logged_not_raised(self, requests_mock, caplog):
+        requests_mock.post('http://192.0.2.1/pwd.cgi', json={'success': False})
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+        dev._curr_password = 'old-password'
+
+        with caplog.at_level('ERROR'):
+            dev.change_password('new-password')  # must not raise
+
+        assert 'Error changing password' in caplog.text
+
+
+class TestApplyChanges:
+    def test_active_zero_or_one_is_success(self, requests_mock):
+        requests_mock.get('http://192.0.2.1/test_mode.cgi', json={'active': 0})
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.apply_changes()  # must not raise
+
+
+class TestWritecfg:
+    def test_success(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/writecfg.cgi', json={'ok': True})
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.writecfg({'radio.0.mode': 'ap-ptp'})
+
+        sent = requests_mock.request_history[0]
+        assert 'radio.0.mode%3Dap-ptp' in sent.text or 'radio.0.mode=ap-ptp' in sent.text
+
+    def test_failure_is_logged_not_raised(self, requests_mock, caplog):
+        requests_mock.post('http://192.0.2.1/writecfg.cgi', json={'ok': False})
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        with caplog.at_level('ERROR'):
+            dev.writecfg({'radio.0.mode': 'ap-ptp'})  # must not raise
