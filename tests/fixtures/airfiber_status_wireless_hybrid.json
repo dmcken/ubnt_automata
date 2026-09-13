@@ -1,0 +1,24 @@
+{
+  "wireless": {
+    "essid": "TEST-BH-LINK",
+    "mode": "ap-ptp",
+    "apmac": "00:11:22:44:44:55",
+    "frequency": 0,
+    "center1_freq": 0,
+    "chanbw": 0,
+    "security": "WPA2",
+    "distance": 0,
+    "prs_info": {
+      "chanbw": 2160,
+      "frequency": 63720,
+      "sta_count": 1
+    },
+    "sta": [
+      {
+        "mac": "00:11:22:44:44:66",
+        "linked_5": false,
+        "linked_60": true
+      }
+    ]
+  }
+}

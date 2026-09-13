@@ -1,0 +1,27 @@
+{
+  "wireless": {
+    "radios": [
+      {
+        "id": "main",
+        "linkState": "connected",
+        "frequency": {
+          "center": 69120
+        },
+        "channelWidth": {
+          "tx": 2160
+        }
+      },
+      {
+        "id": "backup",
+        "linkState": "disconnected",
+        "frequency": {
+          "center": 5510,
+          "control": 5500
+        },
+        "channelWidth": {
+          "tx": 40
+        }
+      }
+    ]
+  }
+}

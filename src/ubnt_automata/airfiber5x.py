@@ -382,6 +382,33 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         '''
         return airoscommon.parse_gps_fix(self.getstatus().get('gps'))
 
+    def get_wireless(self) -> list[airoscommon.WirelessRadio]:
+        '''This device's own operating radio(s) (status.cgi's `wireless`
+        block, and - on a hybrid AF5X unit - its `wireless.prs_info`
+        sub-block for the 60GHz radio).
+
+        Confirmed live on a real AF5X: the top-level block (radio_id
+        'airmax') can report frequency 0/chanbw 0 - not missing data,
+        just not the radio currently carrying traffic - while
+        `prs_info` (radio_id '60ghz') reports the real operating
+        frequency/width instead (see `wireless.sta[].linked_5`/
+        `linked_60` to tell which one is actually up). A plain,
+        non-hybrid AirFiber has no `prs_info` key at all, so only the
+        one radio is returned for those.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            list[airoscommon.WirelessRadio]: One or two radios.
+        '''
+        wireless = self.getstatus().get('wireless', {})
+        radios = [airoscommon.parse_status_wireless_radio('airmax', wireless)]
+        prs_info = wireless.get('prs_info')
+        if prs_info:
+            radios.append(airoscommon.parse_status_wireless_radio('60ghz', prs_info))
+        return radios
+
     def getcfg(self) -> dict[str, str]:
         '''Get the device configuration (getcfg.cgi).
 

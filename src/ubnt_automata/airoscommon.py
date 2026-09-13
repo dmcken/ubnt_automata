@@ -25,6 +25,55 @@ class GPSFix:
     fix: int
 
 
+@dataclasses.dataclass
+class WirelessRadio:
+    '''One radio's operating frequency/channel width, normalized from
+    AirOS v8's/AirFiber's status.cgi `wireless` block (see
+    parse_status_wireless_radio()). UISP-firmware devices report a
+    materially different raw shape (statistics's `wireless.radios`,
+    nested frequency.center/channelWidth.tx, no essid/security at this
+    layer) and are parsed directly into this same shape by
+    UispDevice.get_wireless() instead.
+    '''
+    radio_id: str
+    connected: bool
+    frequency_mhz: int | None
+    channel_width_mhz: int | None
+    ssid: str = ''
+    security: str = ''
+
+
+def parse_status_wireless_radio(radio_id: str, block: dict) -> WirelessRadio:
+    '''Normalize a status.cgi `wireless` block (or, for a hybrid
+    AirFiber 5X, its `wireless.prs_info` sub-block) into a
+    WirelessRadio.
+
+    Confirmed live: a radio can legitimately report frequency 0/chanbw
+    0 (e.g. AirFiber 5X's 5GHz radio while the unit is actually passing
+    traffic over its 60GHz radio instead - see `wireless.sta[].
+    linked_5`/`linked_60`) - that's connected=False, not missing data,
+    so every radio is still returned rather than only whichever is
+    currently active.
+
+    Args:
+        radio_id: caller-assigned label ('main', 'airmax', '60ghz') -
+            the raw block itself doesn't name the radio.
+        block: raw `wireless` or `wireless.prs_info` dict - {"frequency",
+            "chanbw", ...}, optionally "essid"/"security" (prs_info has
+            neither).
+    '''
+    frequency = int(block.get('frequency', 0) or 0)
+    chanbw = block.get('chanbw')
+    return WirelessRadio(
+        radio_id=radio_id,
+        connected=frequency > 0,
+        frequency_mhz=frequency or None,
+        channel_width_mhz=int(chanbw) if chanbw else None,
+        ssid=block.get('essid', ''),
+        security=block.get('security', ''),
+    )
+
+
 def parse_gps_fix(gps_data: dict | None) -> GPSFix | None:
     '''Parse a GPS block, returning None if there's no fix.
 

@@ -1,0 +1,12 @@
+{
+  "wireless": {
+    "essid": "TEST-BH-5G",
+    "mode": "ap-ptp",
+    "apmac": "00:11:22:44:44:77",
+    "frequency": 5745,
+    "center1_freq": 5745,
+    "chanbw": 40,
+    "security": "WPA2",
+    "distance": 8056
+  }
+}

@@ -249,3 +249,44 @@ class TestWritecfg:
 
         with caplog.at_level('ERROR'):
             dev.writecfg({'radio.0.mode': 'ap-ptp'})  # must not raise
+
+
+class TestGetWireless:
+    '''Pure parsing coverage via monkeypatched getstatus().'''
+
+    def test_hybrid_unit_returns_both_radios(self, load_json):
+        dev = _device_with_status(load_json('airfiber_status_wireless_hybrid.json'))
+
+        radios = dev.get_wireless()
+
+        assert len(radios) == 2
+        airmax, ghz60 = radios
+
+        # Idle - the unit is actually passing traffic over the 60GHz
+        # radio instead (see sta[].linked_5/linked_60 in the fixture).
+        assert airmax.radio_id == 'airmax'
+        assert airmax.connected is False
+        assert airmax.frequency_mhz is None
+        assert airmax.channel_width_mhz is None
+        assert airmax.ssid == 'TEST-BH-LINK'
+
+        assert ghz60.radio_id == '60ghz'
+        assert ghz60.connected is True
+        assert ghz60.frequency_mhz == 63720
+        assert ghz60.channel_width_mhz == 2160
+        # prs_info has no essid/security of its own.
+        assert ghz60.ssid == ''
+
+    def test_plain_unit_returns_one_radio(self, load_json):
+        dev = _device_with_status(load_json('airfiber_status_wireless_plain.json'))
+
+        radios = dev.get_wireless()
+
+        assert len(radios) == 1
+        radio = radios[0]
+        assert radio.radio_id == 'airmax'
+        assert radio.connected is True
+        assert radio.frequency_mhz == 5745
+        assert radio.channel_width_mhz == 40
+        assert radio.ssid == 'TEST-BH-5G'
+        assert radio.security == 'WPA2'

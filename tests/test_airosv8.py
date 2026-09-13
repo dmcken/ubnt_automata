@@ -237,3 +237,37 @@ class TestGetGps:
         dev._csrf_id = 'fake-csrf-id'
 
         assert dev.get_gps() is None
+
+
+class TestGetWireless:
+    '''Pure parsing coverage via monkeypatched getstatus() - avoids
+    faking the whole HTTP/auth flow just to test wireless parsing.'''
+
+    def _device_with_status(self, status):
+        dev = AirOSv8('192.0.2.1')
+        dev.getstatus = lambda: status
+        return dev
+
+    def test_parses_the_one_radio(self, load_json):
+        dev = self._device_with_status(load_json('airosv8_status_wireless.json'))
+
+        radios = dev.get_wireless()
+
+        assert len(radios) == 1
+        radio = radios[0]
+        assert radio.radio_id == 'main'
+        assert radio.connected is True
+        assert radio.frequency_mhz == 5765
+        assert radio.channel_width_mhz == 20
+        assert radio.ssid == 'TEST-SITE-PTMP'
+        assert radio.security == 'WPA2'
+
+    def test_no_wireless_key_returns_disconnected_radio(self):
+        dev = self._device_with_status({})
+
+        radios = dev.get_wireless()
+
+        assert len(radios) == 1
+        assert radios[0].connected is False
+        assert radios[0].frequency_mhz is None
+        assert radios[0].channel_width_mhz is None

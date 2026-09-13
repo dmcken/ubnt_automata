@@ -1,0 +1,15 @@
+{
+  "wireless": {
+    "essid": "TEST-SITE-PTMP",
+    "mode": "sta-ptmp",
+    "ieeemode": "AUTO",
+    "band": 2,
+    "apmac": "00:11:22:33:44:55",
+    "frequency": 5765,
+    "center1_freq": 5765,
+    "chanbw": 20,
+    "security": "WPA2",
+    "distance": 750,
+    "count": 1
+  }
+}

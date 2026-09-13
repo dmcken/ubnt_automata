@@ -281,6 +281,23 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         '''
         return airoscommon.parse_gps_fix(self.getstatus().get('gps'))
 
+    def get_wireless(self) -> list[airoscommon.WirelessRadio]:
+        '''This device's own operating frequency/channel width
+        (status.cgi's top-level `wireless` block) - confirmed live on a
+        real Rocket Prism 5AC Gen2 (essid, frequency, center1_freq,
+        chanbw all populated). Always a single-element list - an AirOS
+        v8 unit has exactly one radio - so the return type matches
+        AirFiber's/UISP's multi-radio shape at the call site.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            list[airoscommon.WirelessRadio]: This device's one radio.
+        '''
+        wireless = self.getstatus().get('wireless', {})
+        return [airoscommon.parse_status_wireless_radio('main', wireless)]
+
     def getairview(self) -> dict:
         """Get Air View data.
 

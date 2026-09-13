@@ -303,3 +303,37 @@ class TestGetGps:
         dev.getstatistics = lambda: stats[0]
 
         assert dev.get_gps() is None
+
+
+class TestGetWireless:
+    '''Pure parsing coverage via monkeypatched getstatistics() - the
+    UISP-firmware radios shape (nested frequency.center/channelWidth.tx,
+    no essid/security at this layer) is materially different from
+    AirOS v8's/AirFiber's status.cgi wireless block.'''
+
+    def test_parses_both_radios(self, load_json):
+        stats = load_json('uisp_statistics_radios.json')
+        dev = UispDevice('192.0.2.1')
+        dev.getstatistics = lambda: stats
+
+        radios = dev.get_wireless()
+
+        assert len(radios) == 2
+        main, backup = radios
+
+        assert main.radio_id == 'main'
+        assert main.connected is True
+        assert main.frequency_mhz == 69120
+        assert main.channel_width_mhz == 2160
+        assert main.ssid == ''  # not exposed at this layer
+
+        assert backup.radio_id == 'backup'
+        assert backup.connected is False
+        assert backup.frequency_mhz == 5510
+        assert backup.channel_width_mhz == 40
+
+    def test_no_wireless_key_returns_empty_list(self):
+        dev = UispDevice('192.0.2.1')
+        dev.getstatistics = lambda: {}
+
+        assert dev.get_wireless() == []

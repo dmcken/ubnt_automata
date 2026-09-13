@@ -390,6 +390,37 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         '''
         return airoscommon.parse_gps_fix(self.getstatistics().get('device', {}).get('gps'))
 
+    def get_wireless(self) -> list[airoscommon.WirelessRadio]:
+        '''This device's own operating radio(s) (statistics' `wireless.
+        radios` array).
+
+        Confirmed live on a real Wave Pro: two radios, a 60GHz primary
+        ('main') and a 5GHz failover ('backup'), each under `frequency.
+        center`/`channelWidth.tx` - a materially different raw shape to
+        AirOS v8/AirFiber's status.cgi (nested here instead of flat
+        `frequency`/`chanbw`, and no essid/security exposed at this
+        layer at all), so parsed directly rather than via
+        airoscommon.parse_status_wireless_radio().
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            list[airoscommon.WirelessRadio]: This device's radios.
+        '''
+        radios = self.getstatistics().get('wireless', {}).get('radios', [])
+        result = []
+        for radio in radios:
+            frequency = radio.get('frequency', {}).get('center')
+            channel_width = radio.get('channelWidth', {}).get('tx')
+            result.append(airoscommon.WirelessRadio(
+                radio_id=radio.get('id', ''),
+                connected=radio.get('linkState') == 'connected',
+                frequency_mhz=int(frequency) if frequency else None,
+                channel_width_mhz=int(channel_width) if channel_width else None,
+            ))
+        return result
+
     def gethistorical(self) -> list:
         '''Get historical statistics (statistics/historical).
 
