@@ -34,6 +34,8 @@ class UbntDeviceInfo:
     # 8 - AirOSv8 style kit
     # 9 - UISP-firmware (Wave AP/Pro/Nano/LR, AirFiber 60 XR, EdgePower,
     #     newer-firmware EdgePoint switches like the S16)
+    # 10 - Classic EdgeMAX/EdgeOS web UI (EdgeRouter, older-firmware
+    #      EdgePoint switches)
     model_group: int = 0
     # Model name if known, empty string if not
     model_name: str = ''
@@ -47,13 +49,16 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
 
     Connect to a CPE and determine as much information as possible.
     Tries, in order: AirOSv8's JSON info endpoint, AirOSv6's login
-    redirect, then UISP-firmware's pre-auth public/device endpoint
-    (Wave AP/Pro/Nano/LR, AirFiber 60 XR, EdgePower, newer-firmware
+    redirect, UISP-firmware's pre-auth public/device endpoint (Wave
+    AP/Pro/Nano/LR, AirFiber 60 XR, EdgePower, newer-firmware
     EdgePoint) -- see UispDevice's own docstring for that firmware
-    family. Not universal even then: an EdgePoint S16 running older
-    firmware was confirmed to 401 on public/device pre-login, so it
-    can't be identified without already having a working password,
-    which this function deliberately never attempts.
+    family -- then the classic EdgeMAX/EdgeOS web UI's login page
+    (EdgeRouter, older-firmware EdgePoint). An EdgePoint S16 running
+    older firmware was confirmed to 401 on the UISP-firmware probe's
+    public/device endpoint pre-login -- that's exactly the case this
+    last EdgeOS step is meant to still catch, rather than falling
+    through to unknown, since that older firmware is the classic
+    EdgeMAX web UI, not UISP.
 
     Args:
         - management_ip: str - IP address
@@ -100,6 +105,12 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
         device_data.model_group = 9
         return device_data
 
+    if _probe_edgeos_public(base_url):
+        # No model name available pre-auth -- see edgerouter.py's own
+        # docstring for why (login is required for sys_info).
+        device_data.model_group = 10
+        return device_data
+
     # We don't know, debug and handle any new devices
     device_data.model_group = 0
     return device_data
@@ -140,6 +151,27 @@ def _probe_uisp_public_device(base_url: str) -> dict | None:
         if isinstance(identification, dict) and 'product' in identification
         else None
     )
+
+
+def _probe_edgeos_public(base_url: str) -> bool:
+    '''Whether `base_url` serves the classic EdgeMAX/EdgeOS web UI's
+    login page pre-auth. Confirmed live against a real EdgeRouter: the
+    root path always serves this login page directly, unauthenticated,
+    with the page's <title> set to plain "EdgeOS" -- no model name is
+    available at this point (see edgerouter.py's own docstring), just
+    enough to tell the product family apart from AirOS/UISP.
+    '''
+    try:
+        response = requests.get(
+            f"{base_url}/",
+            timeout=10,
+            allow_redirects=True,
+            verify=False,
+        )
+    except requests.exceptions.RequestException:
+        return False
+
+    return response.status_code == 200 and '<title>EdgeOS</title>' in response.text
 
 def determine_ssl(management_ip: str) -> bool:
     '''Determine if the management interface has SSL enforced.

@@ -233,9 +233,12 @@ class TestDetermineDeviceType:
 
     def test_older_edgepoint_firmware_401_falls_back_to_unknown(self, requests_mock):
         '''An EdgePoint S16 running older firmware was confirmed to
-        401 on public/device even pre-login -- not universal, so this
-        one case can't be identified without a working password,
-        which this function deliberately never tries.
+        401 on public/device even pre-login. This mock doesn't serve
+        real EdgeOS login-page HTML at '/' (see the EdgeOS tests below
+        for that case), so this specific fixture still can't be
+        identified without a working password -- it's exercising "a
+        401 with no other signal falls back to unknown", not "no
+        older EdgePoint can ever be identified".
         '''
         requests_mock.get('http://192.0.2.1/', status_code=200)
         requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
@@ -244,6 +247,45 @@ class TestDetermineDeviceType:
             status_code=401,
             text='Unauthorized',
         )
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 0
+
+    def test_edgeos_login_page(self, requests_mock):
+        '''Classic EdgeMAX/EdgeOS web UI (EdgeRouter, older-firmware
+        EdgePoint) -- confirmed live against a real EdgeRouter: the
+        root path always serves this login page directly,
+        unauthenticated, with the page's <title> set to plain
+        "EdgeOS". No model name is available at this point (see
+        edgerouter.py's own docstring for why).
+        '''
+        requests_mock.get(
+            'http://192.0.2.1/',
+            status_code=200,
+            text='<!doctype html><head><title>EdgeOS</title></head><body></body>',
+        )
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+        requests_mock.get('http://192.0.2.1/api/v1.0/public/device', status_code=404)
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 10
+        assert result.model_name == ''
+
+    def test_edgeos_page_without_matching_title_falls_back_to_unknown(self, requests_mock):
+        '''A page at '/' that isn't the EdgeOS login page (e.g. some
+        other, unrelated device that happens to reach this point)
+        must not be mistaken for one just because every earlier check
+        was also ruled out.
+        '''
+        requests_mock.get(
+            'http://192.0.2.1/',
+            status_code=200,
+            text='<!doctype html><head><title>Not EdgeOS</title></head><body></body>',
+        )
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+        requests_mock.get('http://192.0.2.1/api/v1.0/public/device', status_code=404)
 
         result = utils.determine_device_type('192.0.2.1')
 
