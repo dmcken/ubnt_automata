@@ -230,6 +230,130 @@ class TestCompose:
             pass
 
 
+class TestGetServices:
+    def test_returns_services_body(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            json={'responses': [
+                {
+                    'entity': '/services', 'statusCode': 200,
+                    'body': {'snmpAgent': {'enabled': False}},
+                },
+            ]},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        assert dev.get_services() == {'snmpAgent': {'enabled': False}}
+
+    def test_missing_entity_raises(self, requests_mock):
+        '''e.g. the /services sub-request itself failed - compose()
+        already logs and omits it, leaving nothing for get_services()
+        to key off of.'''
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            json={'responses': []},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.get_services()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError:
+            pass
+
+
+class TestSetSnmp:
+    '''Locks in the read-modify-write shape confirmed via a captured HAR
+    of a real Wave AP's own web UI setting its SNMP agent: GET the full
+    /services object, then PUT the *entire* thing back (every other key
+    carried over unchanged from the GET) with just snmpAgent replaced -
+    never a partial PUT of snmpAgent alone.'''
+
+    def _mock_read_then_write(self, requests_mock, read_body, write_status=200):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            [
+                {'json': {'responses': [
+                    {'entity': '/services', 'statusCode': 200, 'body': read_body},
+                ]}},
+                {'json': {'responses': [
+                    {'entity': '/services', 'statusCode': write_status, 'body': {}},
+                ]}},
+            ],
+        )
+
+    def test_enabling_carries_over_other_service_settings_unchanged(self, requests_mock):
+        self._mock_read_then_write(requests_mock, read_body={
+            'snmpAgent': {'enabled': False},
+            'sshServer': {'enabled': True, 'sshPort': 22, 'passwordAuthentication': True},
+        })
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        dev.set_snmp(enabled=True, community='test-community', location='Test Site', contact='NOC')
+
+        sent = requests_mock.request_history[1].json()
+        assert sent['rollback'] == {'onError': True, 'onUnreachable': {}}
+        assert sent['requests'] == [{
+            'method': 'PUT',
+            'route': '/services',
+            'body': {
+                'snmpAgent': {
+                    'enabled': True, 'community': 'test-community',
+                    'location': 'Test Site', 'contact': 'NOC',
+                },
+                'sshServer': {'enabled': True, 'sshPort': 22, 'passwordAuthentication': True},
+            },
+        }]
+
+    def test_disabling_sends_bare_enabled_false(self, requests_mock):
+        '''Confirmed live: a disabled agent's body is just
+        {"enabled": false} - no stale community/location/contact left
+        behind.'''
+        self._mock_read_then_write(requests_mock, read_body={
+            'snmpAgent': {
+                'enabled': True, 'community': 'old-community',
+                'location': 'Old Site', 'contact': 'Old NOC',
+            },
+        })
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        dev.set_snmp(enabled=False)
+
+        sent = requests_mock.request_history[1].json()
+        assert sent['requests'][0]['body']['snmpAgent'] == {'enabled': False}
+
+    def test_enabling_without_community_raises(self):
+        dev = UispDevice('192.0.2.1')
+
+        try:
+            dev.set_snmp(enabled=True)
+            raise AssertionError('expected ValueError')
+        except ValueError:
+            pass
+
+    def test_failed_write_sub_request_raises(self, requests_mock):
+        self._mock_read_then_write(
+            requests_mock, read_body={'snmpAgent': {'enabled': False}}, write_status=500,
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.set_snmp(enabled=True, community='test-community')
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError:
+            pass
+
+
 class TestGetStatus:
     '''Pure parsing coverage via monkeypatched getstatistics()/compose()
     - avoids faking the whole HTTP/auth flow just to test statistics

@@ -121,6 +121,14 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        tools/unms, system/alerts.
 - tools/unms                        - UNMS/UISP cloud connection
                                        status.
+- services (PUT, via tools/compose) - Confirmed via a captured HAR of a
+                                       real Wave AP's own web UI setting
+                                       its SNMP agent (Settings >
+                                       Services > SNMP save) - see
+                                       set_snmp(). The UI always PUTs
+                                       the entire /services object back
+                                       (read-modify-write), never a
+                                       partial one.
 
 Confirmed via HAR but NOT implemented (out of scope - not local
 telemetry, needs internet from the device):
@@ -131,11 +139,11 @@ telemetry, needs internet from the device):
 Sensitive data warning: several config routes return secrets in plain
 text - confirmed live: wireless.interfaces[].encryption.passphrase
 (under compose(['/system/airos/configuration'])) and
-services.snmpAgent.community (under compose(['/services'])).
-tools/unms and services.unms.key also embed the UISP auth token.
-Callers must not log/print these values. Unlike AirOS's getcfg(),
-system/users here does NOT include password data (just username/
-readOnly/sshKeys).
+services.snmpAgent.community (under compose(['/services']), and as the
+`community` argument to set_snmp()). tools/unms and services.unms.key
+also embed the UISP auth token. Callers must not log/print these
+values. Unlike AirOS's getcfg(), system/users here does NOT include
+password data (just username/readOnly/sshKeys).
 '''
 from __future__ import annotations
 
@@ -212,20 +220,21 @@ class UispDevice(airoscommon.AirOSCommonDevice):
     against those; get_mac_table()/get_discovery()/get_public_device()/
     getstatistics() work fine on any of them).
 
-    Read-only for now: change_password()/apply_changes() are
-    deliberately no-ops here, never touching the device. Unlike
-    AirFiber (see its module docstring), there's no known-equivalent
-    endpoint to reuse for these - system/users (readable via
-    compose()) confirmed live to NOT include password data, and no
-    HAR evidence has been captured yet of the actual write call this
-    firmware's own web UI makes to change a user's password. Wiring
-    these up needs that endpoint confirmed live first, the same way
-    every read method in this class already was - deliberately left
-    as no-ops rather than guessed at, since AirOSCommonDevice.login()'s
-    own retry path calls change_password() on every successful non-
-    primary-password login, so a wrong guess here wouldn't just fail
-    quietly, it would break login() itself for every UISP-firmware
-    device that logs in on anything but its first saved password.
+    set_snmp() is the one confirmed write path (see its docstring).
+    change_password()/apply_changes() are still deliberately no-ops,
+    though, and never touch the device. Unlike AirFiber (see its module
+    docstring), there's no known-equivalent endpoint to reuse for these -
+    system/users (readable via compose()) confirmed live to NOT include
+    password data, and no HAR evidence has been captured yet of the
+    actual write call this firmware's own web UI makes to change a
+    user's password. Wiring these up needs that endpoint confirmed live
+    first, the same way set_snmp() and every read method in this class
+    already were - deliberately left as no-ops rather than guessed at,
+    since AirOSCommonDevice.login()'s own retry path calls
+    change_password() on every successful non-primary-password login,
+    so a wrong guess here wouldn't just fail quietly, it would break
+    login() itself for every UISP-firmware device that logs in on
+    anything but its first saved password.
     '''
 
     _url_path_prefix = 'api/v1.0/'
@@ -569,6 +578,31 @@ class UispDevice(airoscommon.AirOSCommonDevice):
 
         raise RuntimeError(f"Error fetching unms status: {res.status_code} {res.text}")
 
+    def _compose_raw(self, requests: list[dict], rollback: dict | None = None) -> list[dict]:
+        '''Low-level tools/compose call - one or more {"method", "route",
+        "body"?} sub-requests in a single HTTP round trip. Returns the
+        raw `responses` list (entity/body/statusCode per sub-request,
+        unfiltered) - compose() wraps this for the common read-many-GETs
+        case; set_snmp() uses it directly to issue a PUT.
+
+        Raises:
+            RuntimeError: Raised if the overall compose call fails (the
+                HTTP request itself, not an individual sub-request -
+                those are reported per-entry in the returned list).
+        '''
+        res = self._post(
+            "tools/compose",
+            json_body={
+                'requests': requests,
+                'rollback': rollback or {},
+            },
+        )
+
+        if res.status_code != 200:
+            raise RuntimeError(f"Error composing requests: {res.status_code} {res.text}")
+
+        return res.json().get('responses', [])
+
     def compose(self, routes: list[str]) -> dict[str, dict]:
         '''Batch several GET routes into a single request (tools/compose).
 
@@ -584,19 +618,10 @@ class UispDevice(airoscommon.AirOSCommonDevice):
                 sub-request that returned a 2xx status. Sub-requests
                 that failed are logged and omitted.
         '''
-        res = self._post(
-            "tools/compose",
-            json_body={
-                'requests': [{'method': 'GET', 'route': r} for r in routes],
-                'rollback': {},
-            },
-        )
-
-        if res.status_code != 200:
-            raise RuntimeError(f"Error composing requests: {res.status_code} {res.text}")
+        responses = self._compose_raw([{'method': 'GET', 'route': r} for r in routes])
 
         result = {}
-        for entry in res.json().get('responses', []):
+        for entry in responses:
             if 200 <= entry.get('statusCode', 0) < 300:
                 result[entry['entity']] = entry['body']
             else:
@@ -605,6 +630,77 @@ class UispDevice(airoscommon.AirOSCommonDevice):
                     f"{entry.get('statusCode')}"
                 )
         return result
+
+    def get_services(self) -> dict:
+        '''Get the device's service configuration (services) - SNMP
+        agent, SSH/web server, NTP, syslog, ping watchdog, LLDP,
+        Bluetooth management, UNMS connection, etc.
+
+        Sensitive data warning: services.snmpAgent.community and
+        services.unms.key are plaintext secrets in the response - don't
+        log/print it (see module docstring).
+
+        Raises:
+            RuntimeError: Raised if the compose call fails, or the
+                /services sub-request itself didn't come back 2xx.
+
+        Returns:
+            dict: Raw /services body.
+        '''
+        services = self.compose(['/services']).get('/services')
+        if services is None:
+            raise RuntimeError("Error fetching services: no /services entity in compose response")
+        return services
+
+    def set_snmp(
+        self, enabled: bool, community: str | None = None,
+        location: str = '', contact: str = '',
+    ) -> None:
+        '''Enable/configure (or disable) the SNMP agent (services.snmpAgent).
+
+        Confirmed live via a captured HAR of a real Wave AP's own web UI
+        (Settings > Services > SNMP save): the UI does a read-modify-
+        write - GET the full /services object, replace just the
+        snmpAgent sub-object, then PUT the *entire* /services object
+        back through the same tools/compose mechanism used for reads (a
+        single {"method": "PUT", "route": "/services", "body": ...}
+        sub-request, with rollback {"onError": true, "onUnreachable":
+        {}}). PUTting only snmpAgent on its own was never observed and
+        may well wipe the other service settings (SSH/web server, NTP,
+        syslog, ...), so this always round-trips the full object rather
+        than guessing at a partial PUT.
+
+        Args:
+            enabled: Whether the SNMP agent should be enabled. When
+                False, community/location/contact are ignored -
+                confirmed live that a disabled agent's body is just
+                {"enabled": false}, no other keys.
+            community: SNMP community string. Required when enabled=True.
+            location: SNMP sysLocation.
+            contact: SNMP sysContact.
+
+        Raises:
+            ValueError: enabled=True but no community given.
+            RuntimeError: Raised if the compose call fails, or the
+                write sub-request itself doesn't come back 2xx.
+        '''
+        if enabled and not community:
+            raise ValueError("community is required when enabled=True")
+
+        services = self.get_services()
+        services['snmpAgent'] = (
+            {'enabled': True, 'community': community, 'location': location, 'contact': contact}
+            if enabled else {'enabled': False}
+        )
+
+        responses = self._compose_raw(
+            [{'method': 'PUT', 'route': '/services', 'body': services}],
+            rollback={'onError': True, 'onUnreachable': {}},
+        )
+
+        entry = responses[0] if responses else {}
+        if not (200 <= entry.get('statusCode', 0) < 300):
+            raise RuntimeError(f"Error setting SNMP config: statusCode={entry.get('statusCode')}")
 
     def get_status(self) -> UispDeviceStatus:
         '''Structured view of this device's own status and all connected
