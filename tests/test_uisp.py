@@ -334,7 +334,28 @@ class TestSetSnmp:
         dev = UispDevice('192.0.2.1')
 
         try:
-            dev.set_snmp(enabled=True)
+            dev.set_snmp(enabled=True, location='Customer', contact='Customer')
+            raise AssertionError('expected ValueError')
+        except ValueError:
+            pass
+
+    def test_enabling_without_location_raises(self):
+        '''Confirmed live: the device itself 400s on an empty/null
+        location while enabled=True - failing fast client-side avoids
+        that round trip.'''
+        dev = UispDevice('192.0.2.1')
+
+        try:
+            dev.set_snmp(enabled=True, community='test-community', contact='Customer')
+            raise AssertionError('expected ValueError')
+        except ValueError:
+            pass
+
+    def test_enabling_without_contact_raises(self):
+        dev = UispDevice('192.0.2.1')
+
+        try:
+            dev.set_snmp(enabled=True, community='test-community', location='Customer')
             raise AssertionError('expected ValueError')
         except ValueError:
             pass
@@ -348,7 +369,10 @@ class TestSetSnmp:
         dev._auth_token = 'fake-token'
 
         try:
-            dev.set_snmp(enabled=True, community='test-community')
+            dev.set_snmp(
+                enabled=True, community='test-community',
+                location='Customer', contact='Customer',
+            )
             raise AssertionError('expected RuntimeError')
         except RuntimeError:
             pass

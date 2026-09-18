@@ -654,7 +654,7 @@ class UispDevice(airoscommon.AirOSCommonDevice):
 
     def set_snmp(
         self, enabled: bool, community: str | None = None,
-        location: str = '', contact: str = '',
+        location: str | None = None, contact: str | None = None,
     ) -> None:
         '''Enable/configure (or disable) the SNMP agent (services.snmpAgent).
 
@@ -676,16 +676,25 @@ class UispDevice(airoscommon.AirOSCommonDevice):
                 confirmed live that a disabled agent's body is just
                 {"enabled": false}, no other keys.
             community: SNMP community string. Required when enabled=True.
-            location: SNMP sysLocation.
-            contact: SNMP sysContact.
+            location: SNMP sysLocation. Required when enabled=True -
+                confirmed live the device rejects an empty string/null
+                here with a 400 ("must be string between 1-255
+                characters long, or null if service is disabled") -
+                null is only accepted while disabling.
+            contact: SNMP sysContact. Same non-empty-when-enabled rule
+                as location, confirmed live.
 
         Raises:
-            ValueError: enabled=True but no community given.
+            ValueError: enabled=True but community/location/contact
+                wasn't given.
             RuntimeError: Raised if the compose call fails, or the
                 write sub-request itself doesn't come back 2xx.
         '''
-        if enabled and not community:
-            raise ValueError("community is required when enabled=True")
+        if enabled and not (community and location and contact):
+            raise ValueError(
+                "community, location and contact are all required when enabled=True "
+                "(the device itself rejects an empty value for any of them)"
+            )
 
         services = self.get_services()
         services['snmpAgent'] = (
