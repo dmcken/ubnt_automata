@@ -1,0 +1,17 @@
+board.sysid=0xaf09
+board.cpurevision=0x4e840102
+board.name=airFiber 11FX
+board.shortname=AF11FX
+board.subtype=
+board.netmodes=16;
+board.hwaddr=020000000002
+board.reboot=130
+board.upgrade=330
+board.phycount=1
+board.airfiber=1
+board.portnumber=1
+board.fdd=1
+feature.gps=0
+radio.1.name=
+radio.1.shortname=
+radio.1.bus=spi

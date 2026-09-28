@@ -3,13 +3,9 @@ from __future__ import annotations
 
 # System imports
 import dataclasses
-import itertools
 import logging
-import mimetypes
-import random
 import re
 import socket
-import sys
 import urllib
 from urllib.parse import urlparse
 
@@ -92,7 +88,7 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
         device_data.model_group = 8
         return device_data
 
-    if urlparse(r_api.url).path[:10] == '/login.cgi':
+    if _probe_airos_v6_login_redirect(base_url):
         # This is most likely an AirOSv6 device.
         device_data.model_group = 6
         return device_data
@@ -114,6 +110,32 @@ def determine_device_type(management_ip: str) -> UbntDeviceInfo:
     # We don't know, debug and handle any new devices
     device_data.model_group = 0
     return device_data
+
+
+def _probe_airos_v6_login_redirect(base_url: str) -> bool:
+    '''Whether `base_url` redirects an unauthenticated request to its
+    login page in the pattern used by the classic (pre-v8) AirOS/
+    AirFiber web UI. Confirmed live against two real devices: the
+    redirect chain can land directly on /login.cgi, or hop through an
+    intermediate /cookiechecker first (apparently depending on whether
+    a "does this browser accept cookies" cookie is already set) --
+    requests follows either chain automatically via allow_redirects,
+    so only the final landing path needs checking.
+
+    Deliberately probes '/' rather than reusing determine_device_type()'s
+    own request to /api/info/public (an AirOSv8-only endpoint): a live
+    test found that path does *not* trigger the same login redirect on
+    real AirOS v6 firmware, apparently because the redirect-to-login
+    rewrite rule doesn't apply to arbitrary/nonexistent CGI paths.
+    '''
+    try:
+        response = requests.get(
+            f"{base_url}/", timeout=10, allow_redirects=True, verify=False,
+        )
+    except requests.exceptions.RequestException:
+        return False
+
+    return urlparse(response.url).path in ('/login.cgi', '/cookiechecker')
 
 
 def _probe_uisp_public_device(base_url: str) -> dict | None:
@@ -362,127 +384,3 @@ def clean_mac_to_colon(mac):
     chunk_n = 2
 
     return ":".join([mac[i:i + chunk_n] for i in range(0, len(mac), chunk_n)])
-
-def detect_ubnt_version(management_ip: str) -> bool:
-    '''Detect the major Ubnt device version.
-    '''
-    try:
-        result = {}
-        session = requests.Session()
-
-        rez = session.get(
-            f"http://{management_ip}/",
-            verify=False,
-            timeout=30,
-        )
-
-        # res.url will be of the format 'https://10.3.9.42/login.cgi?uri=/' for version 6
-        url_parts = urllib.parse.urlparse(rez.url)
-        #logger.debug(f"detect_ubnt_version - url_parts: {url_parts}")
-        if url_parts.scheme == 'https':
-            result['ssl'] = True
-        elif url_parts.scheme == 'http':
-            result['ssl'] = False
-        else:
-            result['ssl'] = None
-
-        if url_parts.path == '/login.cgi':
-            result['version'] = 'v6'
-        elif url_parts.path == '/':
-            result['version'] = 'v8'
-        else:
-            result['version'] = 'Unknown'
-
-        return result
-    except (urllib3.exceptions.NewConnectionError, requests.exceptions.ConnectionError) as exc:
-        raise exceptions.DeviceUnavailable() from exc
-    except exceptions.DeviceUnavailable:
-        logger.debug(f"Device '{management_ip}' is not reachable")
-        raise
-
-class MultiPartForm:
-    """Accumulate the data to be used when posting a form.
-
-    Copied from: http://doughellmann.com/2009/07/pymotw-urllib2-library-for-opening-urls.html
-    """
-
-    def __init__(self):
-        self.form_fields = []
-        self.files = []
-        self.boundary = self._make_boundary()
-
-    def _make_boundary(self, text=None):
-        # Craft a random boundary.  If text is given, ensure that the chosen
-        # boundary doesn't appear in the text.
-        _width = len(repr(sys.maxsize-1))
-
-        token = random.randrange(sys.maxsize)
-        boundary = f"{'=' * 15}{token:0{_width}d}=="
-        if text is None:
-            return boundary
-        bnd = boundary
-        counter = 0
-        while True:
-            cre = re.compile(
-                '^--' + re.escape(bnd) + '(--)?$',
-                re.MULTILINE
-            )
-            if not cre.search(text):
-                break
-            bnd = boundary + '.' + str(counter)
-            counter += 1
-        return bnd
-
-    def get_content_type(self):
-        '''Get content type'''
-        return f'multipart/form-data; boundary={self.boundary}'
-
-    def add_field(self, name, value):
-        """Add a simple field to the form data."""
-        self.form_fields.append((name, value))
-
-    def add_file(self, fieldname, filename, file_handle, mimetype = None):
-        """Add a file to be uploaded."""
-        body = file_handle.read()
-        if mimetype is None:
-            mimetype = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-        self.files.append((fieldname, filename, mimetype, body))
-
-    def __str__(self):
-        """Return a string representing the form data, including attached files."""
-        # Build a list of lists, each containing "lines" of the
-        # request.  Each part is separated by a boundary string.
-        # Once the list is built, return a string where each
-        # line is separated by '\r\n'.
-        parts = []
-        part_boundary = '--' + self.boundary
-
-        # Add the form fields
-        parts.extend(
-            [
-                part_boundary,
-                f'Content-Disposition: form-data; name="{name}"',
-                '',
-                value,
-            ]
-            for name, value in self.form_fields
-        )
-
-        # Add the files to upload
-        parts.extend(
-            [
-                part_boundary,
-                f'Content-Disposition: file; name="{field_name}"; filename="{filename}"',
-                f'Content-Type: {content_type}',
-                '',
-                body,
-            ]
-            for field_name, filename, content_type, body in self.files
-        )
-
-        # Flatten the list and add closing boundary marker,
-        # then return CR+LF separated data
-        flattened = list(itertools.chain(*parts))
-        flattened.append('--' + self.boundary + '--')
-        flattened.append('')
-        return '\r\n'.join(flattened)

@@ -1,0 +1,17 @@
+{
+  "devices": [
+    {
+      "hwaddr": "02:00:00:00:00:02",
+      "ipv4": "192.0.2.2",
+      "hostname": "TEST-LINK-B",
+      "product": "AF11FX",
+      "uptime": 600509,
+      "wmode": -1,
+      "essid": "",
+      "addresses": [
+        {"hwaddr": "02:00:00:00:00:02", "ipv4": "192.0.2.2"}
+      ],
+      "fwversion": "AF09.am1808.v4.1.0.250.200318.1135"
+    }
+  ]
+}

@@ -292,13 +292,12 @@ class TestDetermineDeviceType:
         assert result.model_group == 0
 
     def test_airosv6_login_redirect(self, requests_mock):
-        requests_mock.get('http://192.0.2.1/', status_code=200)
-        # A real AirOSv6 CPE redirects api/info/public to its login page -
-        # determine_device_type() checks the *final*, post-redirect URL's
-        # path, so mock the actual redirect chain rather than the target
-        # URL directly.
+        # A real AirOSv6 CPE redirects a plain '/' request to its login
+        # page - confirmed live that api/info/public (AirOSv8-only)
+        # does *not* trigger the same redirect, so the dedicated v6
+        # probe hits '/' directly rather than reusing this response.
         requests_mock.get(
-            'http://192.0.2.1/api/info/public',
+            'http://192.0.2.1/',
             status_code=302,
             headers={'Location': 'http://192.0.2.1/login.cgi'},
         )
@@ -307,6 +306,30 @@ class TestDetermineDeviceType:
             status_code=200,
             headers={'Content-Type': 'text/html'},
         )
+        # Not mocked with a redirect - api/info/public genuinely 404s
+        # on this firmware rather than also bouncing to login.cgi.
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
+
+        result = utils.determine_device_type('192.0.2.1')
+
+        assert result.model_group == 6
+
+    def test_airosv6_login_redirect_via_cookiechecker(self, requests_mock):
+        '''A live session with no "browser accepts cookies" cookie yet
+        set hops through an intermediate /cookiechecker page first,
+        rather than landing directly on /login.cgi - confirmed on the
+        same physical device across two different sessions.'''
+        requests_mock.get(
+            'http://192.0.2.1/',
+            status_code=302,
+            headers={'Location': 'http://192.0.2.1/cookiechecker?uri=/'},
+        )
+        requests_mock.get(
+            'http://192.0.2.1/cookiechecker',
+            status_code=200,
+            headers={'Content-Type': 'text/html'},
+        )
+        requests_mock.get('http://192.0.2.1/api/info/public', status_code=404)
 
         result = utils.determine_device_type('192.0.2.1')
 

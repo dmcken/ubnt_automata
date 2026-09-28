@@ -109,12 +109,6 @@ dependencies = [
 [project.optional-dependencies] # Optional
 dev = ["check-manifest"]
 test = ["pytest", "requests-mock", "coverage"]
-# Only needed for AirOSv6 (airosv6.py) - the frozen/historical SSH-based
-# device classes (UbntDevice/UbntSM/UbntAP). Every actively-maintained
-# class (AirOSv8, AirFiber, UispDevice, EdgeRouter) is HTTP-only via
-# `requests` alone - kept as an extra so consumers of this package
-# aren't forced onto spur's old paramiko<4 pin just to import it.
-legacy = ["beautifulsoup4", "paramiko", "spur"]
 
 # List URLs that are relevant to your project
 #
@@ -160,9 +154,6 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py39"
-# Legacy dead code kept for historical purposes only (see its own module
-# docstring) - not linted, matching the pylint disables it carried before.
-extend-exclude = ["src/ubnt_automata/airosv6.py"]
 
 [tool.ruff.lint]
 select = [
