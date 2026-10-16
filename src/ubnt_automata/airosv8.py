@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # System imports
 import dataclasses
+import hashlib
 import http.client
 import json
 import logging
@@ -51,6 +52,32 @@ class FirmwareDownloadProgress:
     status: int
     percent: int
     bytes_downloaded: int
+
+
+@dataclasses.dataclass
+class FirmwareUpdateInfo:
+    '''What a device's own api/fw/update-check reports is available -
+    confirmed live on a real NanoStation 5AC loco (classic airMAX AC, a
+    FOURTH distinct upgrade mechanism on this one class - see
+    upload_and_upgrade()'s docstring for why this family needs its own
+    client-side-fetch-then-upload flow rather than reusing either of
+    the other two). update_available=False with every other field
+    blank/zero is the confirmed-live shape once nothing is outstanding
+    (checked by re-querying right after a real successful upgrade).
+
+    IMPORTANT: download_url/checksum here are NOT the same object
+    firmware_catalog's CATALOG_IDENTITY-based lookup would give you
+    for the same version number - confirmed live the MD5 each reports
+    for the identical "v8.7.25" differs entirely. Only the file THIS
+    method points at has been confirmed to upload and flash correctly
+    on real hardware; treat the two as different files that happen to
+    share a version label, not interchangeable.
+    '''
+    update_available: bool
+    version: str | None
+    download_url: str | None
+    checksum: str | None
+    changelog_url: str | None
 
 
 class AirOSv8(airoscommon.AirOSCommonDevice):
@@ -126,6 +153,44 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
     checking only status_code won't notice) - a plain reboot cleared
     this live.
 
+    Confirmed live against a real LTU-Rocket (same AFLTU image,
+    download_and_upgrade() itself worked fine): commit_upgrade() can
+    ALSO get a 200 with a body reporting failure - "Firmware image
+    check failed. Error code: 99" - rather than the device actually
+    being wrong for this family, this means LTU-Rocket needs its own,
+    still-unknown catalog identity (see firmware_catalog's module
+    docstring) - firmware_catalog.CATALOG_IDENTITY deliberately does
+    NOT list LTU-Rocket/Pro/XR/Instant despite sharing a changelog with
+    LTU-Lite/LR, now that this is confirmed for Rocket specifically.
+    7 real LTU-Rocket units got this exact rejection live, all stayed
+    perfectly healthy throughout (uptime unaffected, nothing flashed) -
+    this is the device's own safety check working as intended, not a
+    brick risk, but it only surfaces correctly because commit_upgrade()
+    checks the response body, not just status_code (see its own
+    docstring) - an earlier version of this method didn't, and a batch
+    script polling for recovery by login-success-alone silently read
+    all 7 as "recovered" with their original firmware unchanged.
+
+    Confirmed live against a real NanoStation 5AC loco (classic
+    airMAX AC, fw v8.7.11, upgrading to a real v8.7.25): a FOURTH,
+    again-unrelated upgrade mechanism - check_firmware_update()/
+    upload_firmware(), or upload_and_upgrade() for a blocking wrapper.
+    Unlike every other mechanism on this class, the device does NOT
+    fetch the image itself here - confirmed live its own device-side
+    auto-fetch (api/fw/download, the same endpoint LTU uses
+    successfully) reliably fails with "Firmware download failed", and
+    the real web UI's own fallback - confirmed live in the exact same
+    HAR, not inferred - is to fetch the image into the BROWSER and
+    upload it directly (fwupl.cgi, multipart/form-data). Reuses
+    commit_upgrade() unchanged for the actual flash + reboot once
+    uploaded. Also confirmed live: this family's own update-check
+    (dl.ubnt.com, Ubiquiti's legacy distribution host) reports a
+    DIFFERENT checksum for the "same" version than firmware_catalog's
+    modern catalog does - only the device's own reported file is
+    confirmed to upload and flash correctly, so upload_and_upgrade()
+    never uses firmware_catalog for this family (see
+    FirmwareUpdateInfo's docstring).
+
     To implement:
     - /chanlist_active.cfg
     - /amdata.cgi
@@ -161,12 +226,17 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         )
 
     def _post(
-        self, path: str, data=None, extra_headers: dict | None = None,
+        self, path: str, data=None, extra_headers: dict | None = None, files=None,
     ) -> requests.Response:
-        '''Authenticated POST against a data endpoint.'''
+        '''Authenticated POST against a data endpoint. `files` (added
+        for upload_firmware()) is passed straight through to requests,
+        which then sets its own correct multipart Content-Type
+        (including the boundary) regardless of any header passed here.
+        '''
         return self._req_session.post(
             self._build_url(path),
             data=data,
+            files=files,
             verify=self._verify_ssl,
             timeout=self._timeout,
             headers={'X-CSRF-ID': self._csrf_id, **(extra_headers or {})},
@@ -543,31 +613,56 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         )
 
     def commit_upgrade(self) -> None:
-        '''Apply a staged upgrade and reboot (fwflash.cgi, POST
-        do_update=1).
+        '''Apply a staged/downloaded image and reboot (fwflash.cgi,
+        POST do_update=1).
 
-        Confirmed live (GigaBeam LR): this is the step that actually
-        flashes the image get_upgrade_status() already reported
-        "finished" (staged) - the device went unreachable for ~168s
-        right after this call, then came back running the new
-        firmware. Uses the SAME X-CSRF-ID auth as every other .cgi
-        method on this class (unlike start_upgrade()/
-        get_upgrade_status(), which need the separate _auth_token) -
-        reuses _post() unchanged.
+        Confirmed live (GigaBeam LR, LTU-Lite, LTU-LR): on success this
+        is the step that actually flashes the image and reboots - the
+        device goes unreachable for a couple of minutes right after
+        this call, then comes back running the new firmware. Uses the
+        SAME X-CSRF-ID auth as every other .cgi method on this class
+        (unlike start_upgrade()/get_upgrade_status(), which need the
+        separate _auth_token) - reuses _post() unchanged.
+
+        CONFIRMED LIVE HAZARD (and the reason this checks the response
+        BODY, not just status_code): the device can reject the image
+        itself at this step while still returning HTTP 200 - confirmed
+        live against a real LTU-Rocket, whose own firmware-image
+        validation refused an AFLTU-platform image built for a
+        different chipset ("amesoc3", confirmed live that's what
+        LTU-Lite/LTU-LR actually run) with body {"message": "Firmware
+        image check failed. Error code: 99", "error_details":
+        "afltu.amesoc3.v2.4.2...", "code": -1} - a working safety
+        check, not a bug in the device, but one that silently looks
+        identical to success if a caller only checks status_code (as
+        an earlier version of this method did - it does not, treating
+        a batch of these as successful recoveries to a later login
+        this method's own result had not actually caused is the real
+        hazard here, not the device itself). Confirmed-good responses
+        (GigaBeam LR and LTU-Lite/LR alike) are {"message": "Upgrade
+        initiated", "code": 0} - code is the field checked.
 
         Calling this with nothing staged, or before get_upgrade_status()
         reports "finished", has not been tested - do_update=1 is
         assumed to be meaningless/safe in that case, not confirmed.
 
         Raises:
-            RuntimeError: Raised if the device rejects the request
-                itself. The device going unreachable immediately after
-                a successful call is the expected/confirmed behaviour,
-                not a failure of this call.
+            RuntimeError: Raised if the device rejects the request at
+                the HTTP level (non-200).
+            exceptions.UpgradeFailed: Raised if the device accepts the
+                request (200) but its own response body reports
+                failure (a non-zero `code`) - see the hazard above.
         '''
         res = self._post("fwflash.cgi", data={'do_update': '1'})
         if res.status_code != 200:
             raise RuntimeError(f"Error committing upgrade: {res.status_code} {res.text}")
+
+        data = res.json()
+        if data.get('code', 0) != 0:
+            raise exceptions.UpgradeFailed(
+                f"Device {self._mgmt_ip} rejected the commit: {data.get('message')!r} "
+                f"({data.get('error_details')!r})"
+            )
 
     def upgrade_and_wait(
         self, url: str, secure: bool = False,
@@ -595,12 +690,17 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         Raises:
             exceptions.UpgradeFailed: Raised if the device reports a
-                non-empty failure_reason, an unrecognized status, or
-                if max_wait elapses first.
+                non-empty failure_reason, an unrecognized status, if
+                max_wait elapses first, or if staging reaches
+                "finished" but commit_upgrade() itself then reports
+                failure (confirmed live against a real LTU-Rocket,
+                a different upgrade flow but the same shared method -
+                see its docstring).
 
         Returns:
-            AirOSv8UpgradeStatus: The "finished" (staged) status, just
-                before commit_upgrade() was called.
+            AirOSv8UpgradeStatus: The "finished" (staged) status -
+                commit_upgrade() has also been called successfully by
+                the time this returns.
         '''
         self.start_upgrade(url, secure=secure)
 
@@ -740,12 +840,16 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         Raises:
             exceptions.UpgradeFailed: Raised if the device reports a
                 status other than 0 (in-progress) or -1 (idle - see
-                get_firmware_download_progress()'s docstring), or if
-                max_wait elapses first.
+                get_firmware_download_progress()'s docstring), if
+                max_wait elapses first, or if the download reaches
+                100% but commit_upgrade() itself then reports failure
+                (confirmed live against a real LTU-Rocket - see its
+                docstring).
 
         Returns:
-            FirmwareDownloadProgress: The final 100%-complete status,
-                just before commit_upgrade() was called.
+            FirmwareDownloadProgress: The 100%-complete download
+                status - commit_upgrade() has also been called
+                successfully by the time this returns.
         '''
         self.start_firmware_download(fw_url, fw_checksum)
 
@@ -765,6 +869,149 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         raise exceptions.UpgradeFailed(
             f"Device {self._mgmt_ip} did not finish downloading within {max_wait}s"
         )
+
+    def check_firmware_update(self, force: bool = False) -> FirmwareUpdateInfo:
+        '''Ask the device itself whether an update is available
+        (api/fw/update-check, POST) - confirmed live this is a classic
+        airMAX AC device's OWN check against Ubiquiti's legacy
+        dl.ubnt.com firmware distribution, a completely different
+        source from firmware_catalog's modern fw-update.ubnt.com API -
+        see FirmwareUpdateInfo's docstring for why that matters.
+
+        Args:
+            force: Confirmed live the real web UI sends this (as
+                force=yes) on a manual re-check; unconfirmed what, if
+                anything, it actually changes server-side.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            FirmwareUpdateInfo: What's available, if anything.
+        '''
+        data_body = {'force': 'yes'} if force else None
+        res = self._post("api/fw/update-check", data=data_body)
+        if res.status_code != 200:
+            raise RuntimeError(f"Error checking for firmware update: {res.status_code} {res.text}")
+
+        data = res.json()
+        return FirmwareUpdateInfo(
+            update_available=data.get('update', False),
+            version=data.get('version'),
+            download_url=data.get('url'),
+            checksum=data.get('checksum'),
+            changelog_url=data.get('changelog'),
+        )
+
+    def upload_firmware(self, data: bytes, filename: str) -> None:
+        '''Upload a firmware image directly (fwupl.cgi, POST
+        multipart/form-data) - confirmed live this is what a classic
+        airMAX AC device's own web UI actually falls back to, because
+        its device-side auto-fetch (api/fw/download, the same
+        mechanism LTU uses successfully) was confirmed live to fail
+        there every time ("Firmware download failed" - the REAL web
+        UI hit this exact error 3 times before falling back to this
+        method, not just this library). upload_and_upgrade() always
+        uses this path directly rather than attempting the unreliable
+        auto-fetch first.
+
+        Uses the SAME X-CSRF-ID auth as every other .cgi method on
+        this class - reuses _post() (extended to accept `files`, see
+        its docstring) rather than a special case.
+
+        IMPORTANT: this writes to the device - there is no dry-run/
+        undo once commit_upgrade() is subsequently called.
+
+        Args:
+            data: Raw firmware image bytes - see upload_and_upgrade()
+                for where these should come from (check_firmware_
+                update()'s own download_url, not firmware_catalog -
+                see FirmwareUpdateInfo's docstring for why).
+            filename: Sent as the multipart field's filename -
+                confirmed live the real web UI uses the source URL's
+                own last path segment (e.g.
+                "WA.v8.7.25.48568.260730.1010.bin").
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request at
+                the HTTP level, or accepts it (200) but its own body
+                reports failure (a non-zero `code` - confirmed-good
+                responses look like {"isThirdParty": false, "version":
+                "WA.v8.7.25", "code": 0}).
+        '''
+        res = self._post(
+            "fwupl.cgi", files={'fwfile': (filename, data, 'application/octet-stream')},
+        )
+        if res.status_code != 200:
+            raise RuntimeError(f"Error uploading firmware: {res.status_code} {res.text}")
+
+        result = res.json()
+        if result.get('code', 0) != 0:
+            raise RuntimeError(f"Device {self._mgmt_ip} rejected the uploaded firmware: {result}")
+
+    def upload_and_upgrade(self, fetch_timeout: int = 120) -> FirmwareUpdateInfo:
+        '''Check for an update, fetch it CLIENT-SIDE (from wherever
+        this code runs, not the device), upload it directly, then
+        commit it (flash + reboot) - confirmed live end-to-end on a
+        real NanoStation 5AC loco (classic airMAX AC).
+
+        This is NOT the same shape as either upgrade_and_wait()
+        (GigaBeam) or download_and_upgrade() (LTU), both of which hand
+        the device a URL and let IT fetch the image. Confirmed live
+        that the equivalent device-side fetch for this family
+        (start_upgrade()/start_firmware_download() would both 404 or
+        behave unpredictably here anyway - this class never exposed
+        them for this hardware) reliably fails with "Firmware download
+        failed" - the real web UI hits this exact error itself several
+        times before falling back to fetching the file into the
+        browser and uploading it, which is what this method always
+        does directly, skipping the doomed attempt.
+
+        IMPORTANT: this writes to the device and can brick it if
+        interrupted or given a bad image - there is no dry-run/undo.
+        Fetches the real firmware bytes over the network from
+        Ubiquiti's own legacy distribution host (dl.ubnt.com, per
+        check_firmware_update()) - verifies the download against the
+        checksum that call reported before uploading anything.
+
+        Args:
+            fetch_timeout: Seconds to allow for fetching the firmware
+                bytes (a ~10MB file, confirmed live) - separate from
+                this device's own self._timeout, which governs each
+                individual device-facing HTTP call instead.
+
+        Raises:
+            exceptions.UpgradeFailed: Raised if no update is available,
+                or if the fetched bytes don't match the reported
+                checksum.
+            RuntimeError: Raised if the fetch itself fails, or if
+                upload_firmware()/commit_upgrade() report failure (see
+                their own docstrings).
+
+        Returns:
+            FirmwareUpdateInfo: What was just installed.
+        '''
+        info = self.check_firmware_update()
+        if not info.update_available:
+            raise exceptions.UpgradeFailed(f"Device {self._mgmt_ip} reports no update available")
+
+        fetch_res = requests.get(info.download_url, timeout=fetch_timeout)
+        if fetch_res.status_code != 200:
+            raise RuntimeError(
+                f"Error fetching firmware from {info.download_url}: {fetch_res.status_code}"
+            )
+
+        actual_checksum = hashlib.md5(fetch_res.content).hexdigest()
+        if info.checksum and actual_checksum != info.checksum:
+            raise exceptions.UpgradeFailed(
+                f"Fetched firmware checksum {actual_checksum} does not match "
+                f"the {info.checksum} {self._mgmt_ip} itself reported - refusing to upload it"
+            )
+
+        filename = info.download_url.rsplit('/', 1)[-1]
+        self.upload_firmware(fetch_res.content, filename)
+        self.commit_upgrade()
+        return info
 
     def enable_debug(self) -> None:
         '''Enable debugging'''

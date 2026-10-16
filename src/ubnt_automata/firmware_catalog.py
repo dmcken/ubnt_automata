@@ -35,12 +35,25 @@ relation to the device's own self-reported family/model strings, and
 no known API to look them up from the device itself - confirmed
 "wave"/"GMC" for a Wave Nano, "airmax"/"GBE" for GigaBeam LR/Plus
 (sharing one image - see CATALOG_IDENTITY), and "airfiber"/"AFLTU" for
-LTU-Lite. That LTU case also confirmed (via its own changelog text,
-"LTU PTMP FW support for: LTU-Rocket, LTU-Lite, LTU-Pro, LTU-LR,
-LTU-XR, LTU-Instant") that every LTU PTMP model shares the same
-"AFLTU" image too - CATALOG_IDENTITY maps the ones actually seen live
-in this fleet; the rest are a reasonable inference from that changelog
-line, not separately confirmed.
+LTU-Lite and LTU-LR (confirmed - each upgraded live, successfully,
+with the exact same AFLTU image).
+
+IMPORTANT - "AFLTU" is NOT a shared image across every LTU PTMP model,
+despite LTU-Lite's own changelog text listing "LTU PTMP FW support
+for: LTU-Rocket, LTU-Lite, LTU-Pro, LTU-LR, LTU-XR, LTU-Instant" as if
+it were one release line. That changelog mention is real but turned
+out to describe a coordinated release wave across the product line,
+not one binary - confirmed live a real LTU-Rocket's own firmware-image
+validation REJECTS this exact AFLTU image outright (airosv8.AirOSv8.
+commit_upgrade() raises exceptions.UpgradeFailed for it: "Firmware
+image check failed. Error code: 99", error_details identifying the
+image as built for chipset "amesoc3" - confirmed separately that's
+what LTU-Lite/LTU-LR actually run, so Rocket is presumably a different
+chipset the same catalog entry simply doesn't cover). CATALOG_IDENTITY
+below only lists LTU-Lite/LTU-LR for that family - Rocket's/Pro's/
+XR's/Instant's real catalog identity (if their firmware is in this
+catalog at all) is unknown, not merely unconfirmed, and must not be
+guessed at from the changelog text alone again.
 '''
 from __future__ import annotations
 
@@ -69,15 +82,13 @@ CATALOG_IDENTITY = {
     # (v1.5.1.3f54e8e6.250725.1224), implying they ship the identical
     # image and so share GBE's catalog entry.
     'GigaBeam Plus': ('airmax', 'GBE'),
+    # Both confirmed live by a real successful upgrade, not just a
+    # catalog lookup - see the module docstring for why LTU-Rocket/
+    # Pro/XR/Instant are deliberately NOT here despite sharing a
+    # changelog with these two: that's confirmed wrong for Rocket,
+    # specifically, not just unconfirmed.
     'LTU-Lite': ('airfiber', 'AFLTU'),
-    # Not independently confirmed - inferred from LTU-Lite's own
-    # changelog text listing all of these as sharing one firmware line
-    # (see module docstring).
     'LTU-LR': ('airfiber', 'AFLTU'),
-    'LTU-Rocket': ('airfiber', 'AFLTU'),
-    'LTU-Pro': ('airfiber', 'AFLTU'),
-    'LTU-XR': ('airfiber', 'AFLTU'),
-    'LTU-Instant': ('airfiber', 'AFLTU'),
 }
 
 
