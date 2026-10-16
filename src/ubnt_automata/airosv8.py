@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 # System imports
+import dataclasses
 import http.client
 import json
 import logging
 import pprint
+import time
 
 # External imports
 import requests
@@ -19,6 +21,21 @@ logger = logging.getLogger(__name__)
 
 # Disable the self signed certificate warnings.
 urllib3.disable_warnings()
+
+
+@dataclasses.dataclass
+class AirOSv8UpgradeStatus:
+    '''Progress of an in-flight (or just-finished) firmware upgrade
+    (the /api/v1.0/system/upgrade GET response) - a different shape
+    from UispDevice's UpgradeStatus (no metadata.version, no warnings
+    list; has remaining_time and a failure_reason string instead).
+    Confirmed live: "finished" means the image has been downloaded and
+    staged, NOT that it's been applied - see commit_upgrade().
+    '''
+    status: str | None
+    progress_percent: int
+    remaining_time: int
+    failure_reason: str
 
 
 class AirOSv8(airoscommon.AirOSCommonDevice):
@@ -41,6 +58,37 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
       as AirFiber's (used for the tower/site GPS a device with built-in
       GPS can report, not to be confused with per-peer GPS on a link).
 
+    Confirmed live against a real GigaBeam LR (fw v1.4.0): the firmware-
+    upgrade trio (start_upgrade()/get_upgrade_status()/commit_upgrade(),
+    or upgrade_and_wait() for a blocking wrapper) - see each method's
+    docstring. This device turns out to be a genuine hybrid: every
+    other method on this class goes through the X-CSRF-ID/.cgi surface
+    (_get()/_post()), but upgrading additionally needs the SAME modern
+    /api/v1.0/ JSON REST surface UispDevice uses (a DIFFERENT credential
+    though - its own x-auth-token, called `utoken` in the api/auth
+    response, not the X-CSRF-ID header value - both come back from the
+    exact same login call, captured by login_http() into separate
+    attributes). The two-stage shape itself is also new: system/upgrade
+    only downloads+stages the image (confirmed live: progressPercent
+    stayed 0 throughout, same as UISP-firmware, then jumped to 100/
+    "finished" - no restart happened at that point), and a SEPARATE
+    legacy fwflash.cgi call (do_update=1, X-CSRF-ID auth like every
+    other .cgi endpoint here) is what actually commits it to flash and
+    reboots - confirmed live the real web UI waits ~12s after "finished"
+    before sending it. Device went unreachable for ~168s after that,
+    closely matching the api/auth response's own boardinfo
+    (board.upgrade=180) - upgrade_and_wait() does not itself wait for
+    the device to come back online, matching UispDevice.reboot()'s
+    fire-and-forget behaviour; confirming the device actually
+    recovered is left to the caller, the same as every real upgrade
+    run against UispDevice this was built alongside.
+
+    UNCONFIRMED whether this upgrade surface exists on anything but a
+    GigaBeam LR - the Rocket Prism 5AC these other methods were
+    confirmed against was never tested against it, and may simply 404
+    (start_upgrade() surfaces that as a plain RuntimeError, not a
+    crash, either way).
+
     To implement:
     - /chanlist_active.cfg
     - /amdata.cgi
@@ -48,10 +96,8 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
     To implement:
     loginSSH
-    reboot
     changeParameterHTTP
     changeParameterSSH
-    upgradeDevice
     '''
 
     def __init__(self, management_ip: str, timeout: int | None = None) -> None:
@@ -63,6 +109,7 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         self._req_session = requests.Session()
         self._dev_info   = None
         self._csrf_id    = None
+        self._auth_token = None
 
     def _get(
         self, path: str, params: dict | None = None, extra_headers: dict | None = None,
@@ -86,6 +133,29 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             verify=self._verify_ssl,
             timeout=self._timeout,
             headers={'X-CSRF-ID': self._csrf_id, **(extra_headers or {})},
+        )
+
+    def _get_v1(self, path: str) -> requests.Response:
+        '''Authenticated GET against the newer /api/v1.0/ surface this
+        device ALSO exposes (confirmed live, GigaBeam LR) alongside the
+        X-CSRF-ID/.cgi one every other method here uses - keyed by
+        _auth_token (the api/auth response's `utoken`), not _csrf_id.
+        '''
+        return self._req_session.get(
+            self._build_url(f"api/v1.0/{path}"),
+            verify=self._verify_ssl,
+            timeout=self._timeout,
+            headers={'x-auth-token': self._auth_token},
+        )
+
+    def _post_v1(self, path: str, json_body: dict | None = None) -> requests.Response:
+        '''POST counterpart to _get_v1() - see its docstring.'''
+        return self._req_session.post(
+            self._build_url(f"api/v1.0/{path}"),
+            json=json_body,
+            verify=self._verify_ssl,
+            timeout=self._timeout,
+            headers={'x-auth-token': self._auth_token},
         )
 
     def login_http(self, curr_pw: str, curr_user:str | None = None) -> None:
@@ -131,6 +201,12 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             self._curr_password = curr_pw
             self._dev_info = rez.json()['boardinfo']
             self._csrf_id = rez.headers['X-CSRF-ID']
+            # A SEPARATE credential from _csrf_id (confirmed live the
+            # two values differ) - only used by the /api/v1.0/ surface,
+            # see start_upgrade()/get_upgrade_status(). Not every
+            # AirOSv8 device's api/auth response has been confirmed to
+            # include this key, so default to None rather than KeyError.
+            self._auth_token = rez.json().get('utoken')
         except exceptions.WrongPassword:
             raise
         except (requests.exceptions.ConnectionError,
@@ -363,6 +439,154 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             return res.json()
 
         raise RuntimeError(f"Error fetching site survey data: {res.text}")
+
+    def start_upgrade(self, url: str, secure: bool = False) -> None:
+        '''Start a firmware upgrade (/api/v1.0/system/upgrade, POST).
+
+        Confirmed live (GigaBeam LR): same url-based mechanism as
+        UispDevice.start_upgrade() - the device fetches and stages the
+        firmware itself from `url`, so this doesn't have to be one of
+        Ubiquiti's own servers (see ubnt_automata.firmware_catalog for
+        querying that catalog directly). Confirmed DIFFERENT from
+        UispDevice in two ways: no `timeout` key in the real request
+        body (only url/secure), and this only downloads+stages the
+        image - it does NOT apply it. Call commit_upgrade() (or use
+        upgrade_and_wait()) once get_upgrade_status() reports
+        "finished" to actually flash and reboot.
+
+        IMPORTANT: this writes to the device - there is no dry-run/
+        undo once commit_upgrade() is called.
+
+        Args:
+            url: Firmware image URL, reachable BY THE DEVICE - see
+                UispDevice.start_upgrade()'s docstring, same reasoning.
+            secure: Whether the device should verify the URL's TLS
+                certificate. Confirmed live the real web UI sends
+                `false` even for an https:// Ubiquiti CDN URL.
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request
+                itself - NOT raised for an upgrade that fails after
+                starting; poll get_upgrade_status() for that.
+        '''
+        res = self._post_v1("system/upgrade", json_body={'url': url, 'secure': secure})
+        if res.status_code != 200:
+            raise RuntimeError(f"Error starting upgrade: {res.status_code} {res.text}")
+
+    def get_upgrade_status(self) -> AirOSv8UpgradeStatus:
+        '''Current firmware upgrade progress (/api/v1.0/system/upgrade,
+        GET).
+
+        Confirmed live (GigaBeam LR): progressPercent stayed at 0 for
+        the entire download (no granular progress, same as
+        UispDevice), then jumped straight to 100/"finished" - at which
+        point the image is only staged, not yet applied (see
+        commit_upgrade()). No failure case has been observed live -
+        failure_reason is passed through as-is (empty string normally;
+        a non-empty value is treated as a hard failure by
+        upgrade_and_wait() regardless of `status`, since its meaning
+        isn't ambiguous the way an unrecognized status string would be).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            AirOSv8UpgradeStatus: Current upgrade progress.
+        '''
+        res = self._get_v1("system/upgrade")
+        if res.status_code != 200:
+            raise RuntimeError(f"Error fetching upgrade status: {res.status_code} {res.text}")
+
+        data = res.json()
+        return AirOSv8UpgradeStatus(
+            status=data.get('status'),
+            progress_percent=data.get('progressPercent', 0),
+            remaining_time=data.get('remainingTime', 0),
+            failure_reason=data.get('failureReason', ''),
+        )
+
+    def commit_upgrade(self) -> None:
+        '''Apply a staged upgrade and reboot (fwflash.cgi, POST
+        do_update=1).
+
+        Confirmed live (GigaBeam LR): this is the step that actually
+        flashes the image get_upgrade_status() already reported
+        "finished" (staged) - the device went unreachable for ~168s
+        right after this call, then came back running the new
+        firmware. Uses the SAME X-CSRF-ID auth as every other .cgi
+        method on this class (unlike start_upgrade()/
+        get_upgrade_status(), which need the separate _auth_token) -
+        reuses _post() unchanged.
+
+        Calling this with nothing staged, or before get_upgrade_status()
+        reports "finished", has not been tested - do_update=1 is
+        assumed to be meaningless/safe in that case, not confirmed.
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request
+                itself. The device going unreachable immediately after
+                a successful call is the expected/confirmed behaviour,
+                not a failure of this call.
+        '''
+        res = self._post("fwflash.cgi", data={'do_update': '1'})
+        if res.status_code != 200:
+            raise RuntimeError(f"Error committing upgrade: {res.status_code} {res.text}")
+
+    def upgrade_and_wait(
+        self, url: str, secure: bool = False,
+        poll_interval: float = 1.0, max_wait: float = 300.0,
+    ) -> AirOSv8UpgradeStatus:
+        '''Start a firmware upgrade, block until it's staged, then
+        commit it (flash + reboot).
+
+        See start_upgrade() for what `url` can be. Unlike
+        UispDevice.upgrade_and_wait(), this does NOT itself wait for
+        the device to come back online afterwards - commit_upgrade()
+        is fire-and-forget, the same as UispDevice.reboot(). Confirming
+        the device actually recovered (it took ~168s live, against a
+        real GigaBeam LR) is left to the caller.
+
+        IMPORTANT: this writes to the device and can brick it if
+        interrupted or given a bad image - there is no dry-run/undo.
+
+        Args:
+            url: Firmware image URL - see start_upgrade().
+            secure: See start_upgrade().
+            poll_interval: Seconds between get_upgrade_status() calls.
+            max_wait: Give up and raise if staging hasn't reached
+                "finished" within this many seconds.
+
+        Raises:
+            exceptions.UpgradeFailed: Raised if the device reports a
+                non-empty failure_reason, an unrecognized status, or
+                if max_wait elapses first.
+
+        Returns:
+            AirOSv8UpgradeStatus: The "finished" (staged) status, just
+                before commit_upgrade() was called.
+        '''
+        self.start_upgrade(url, secure=secure)
+
+        elapsed = 0.0
+        while elapsed < max_wait:
+            status = self.get_upgrade_status()
+            if status.failure_reason:
+                raise exceptions.UpgradeFailed(
+                    f"Device {self._mgmt_ip} reported a failed upgrade: {status.failure_reason!r}"
+                )
+            if status.status == 'finished':
+                self.commit_upgrade()
+                return status
+            if status.status not in (None, 'in_progress'):
+                raise exceptions.UpgradeFailed(
+                    f"Device {self._mgmt_ip} reported upgrade status {status.status!r}"
+                )
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        raise exceptions.UpgradeFailed(
+            f"Device {self._mgmt_ip} did not finish staging the upgrade within {max_wait}s"
+        )
 
     def enable_debug(self) -> None:
         '''Enable debugging'''

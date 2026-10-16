@@ -38,9 +38,16 @@ all, confirmed to serve the byte-identical object (same ETag/
 Content-Length, no signature needed). _resolve_stable_download_url()
 reproduces that: follow the redirect without downloading the body,
 then substitute the stable host for the signed one. Confirmed live
-for exactly one release/product (Wave Nano, GMC, v4.1.1) - assumed,
-not separately confirmed, to generalize to every other release this
-catalog serves.
+for two distinct releases/products (Wave Nano/GMC/v4.1.1, GigaBeam LR/
+GBE/v1.5.1) - assumed, not separately confirmed, to generalize to
+every other release this catalog serves.
+
+`platform` is also not always the device's own device-class family -
+confirmed live GigaBeam LR (whose own public/device-equivalent reports
+family "airmax" via AirOSv8's status.cgi, not a UispDevice at all)
+uses platform "airmax" here too, so this one case happens to still
+line up; not yet confirmed whether that holds for every AirOSv8-class
+device or is specific to GigaBeam.
 '''
 from __future__ import annotations
 
@@ -58,11 +65,23 @@ CATALOG_BASE_URL = 'https://fw-update.ubnt.com/api/firmware'
 # identical object at the same path with no signature/expiry at all.
 STABLE_DOWNLOAD_HOST = 'https://fw-download.ubnt.com'
 
-# identification.model -> catalog product code. Extend as more models
-# are confirmed live against a real device/HAR - deliberately small
-# rather than guessed at for unconfirmed models.
+# Device's own model name -> catalog product code. The exact source
+# field varies by device class (UispDevice's identification.model;
+# AirOSv8's status.cgi host.devmodel / api/auth boardinfo's
+# board.model, confirmed identical values for GigaBeam LR) - there's
+# no known API to look this code up from the device itself, so this
+# is a plain mapping, built up one confirmed model at a time, not
+# derived, and deliberately small rather than guessed at for
+# unconfirmed models.
 PRODUCT_CODES = {
     'Wave-Nano': 'GMC',
+    'GigaBeam LR': 'GBE',
+    # Not independently confirmed via its own catalog entry - inferred
+    # from a real GigaBeam Plus reporting the exact same byte-for-byte
+    # firmware build string as a real GigaBeam LR
+    # (v1.5.1.3f54e8e6.250725.1224), implying they ship the identical
+    # image and so share GBE's catalog entry.
+    'GigaBeam Plus': 'GBE',
 }
 
 
