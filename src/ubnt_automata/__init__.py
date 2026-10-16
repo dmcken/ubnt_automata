@@ -2,8 +2,8 @@
 # Classes accessible from import
 
 
-# Exceptions
-from . import exceptions
+# Modules
+from . import exceptions, firmware_catalog
 
 # Classes
 from .airfiber5x import AirFiber
@@ -15,7 +15,7 @@ from .utils import determine_device_type, parse_ubnt_version_string
 
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     'AirFiber',
@@ -25,5 +25,6 @@ __all__ = [
     'UispDevice',
     'determine_device_type',
     'exceptions',
+    'firmware_catalog',
     'parse_ubnt_version_string',
 ]

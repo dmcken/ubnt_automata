@@ -1,9 +1,13 @@
 '''Tests for UispDevice - the UISP-firmware JSON REST API family
 (Wave/AirFiber-XR/EdgePower/newer EdgePoint switches). Covers login's
 Origin/Referer header requirement, the GET-not-POST discovery choice,
-and get_status()'s statistics/peer parsing.'''
-from ubnt_automata import exceptions
-from ubnt_automata.uisp import UispDevice
+get_status()'s statistics/peer parsing, and the firmware-upgrade trio
+(start_upgrade()/get_upgrade_status()/reboot(), plus the blocking
+upgrade_and_wait() wrapper).'''
+import unittest.mock
+
+from ubnt_automata import exceptions, uisp
+from ubnt_automata.uisp import UispDevice, UpgradeStatus
 
 
 class TestBuildUrl:
@@ -485,3 +489,212 @@ class TestGetWireless:
         dev.getstatistics = lambda: {}
 
         assert dev.get_wireless() == []
+
+
+class TestStartUpgrade:
+    def test_sends_url_secure_and_timeout(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/system/upgrade',
+            json={'statusCode': 200, 'error': 0},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        dev.start_upgrade('https://example.invalid/fw.bin')
+
+        sent = requests_mock.request_history[0].json()
+        assert sent == {'url': 'https://example.invalid/fw.bin', 'secure': False, 'timeout': 0}
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/system/upgrade',
+            status_code=400,
+            text='bad request',
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.start_upgrade('https://example.invalid/fw.bin')
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '400' in str(exc)
+
+
+class TestGetUpgradeStatus:
+    def test_parses_in_progress(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/system/upgrade',
+            json={'progressPercent': 0, 'status': 'in_progress', 'warnings': []},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        status = dev.get_upgrade_status()
+
+        assert status.status == 'in_progress'
+        assert status.progress_percent == 0
+        assert status.version is None
+        assert status.warnings == []
+
+    def test_parses_finished_with_version(self, requests_mock):
+        '''Confirmed live: `metadata.version` only appears once
+        "finished" - the device confirming what it's now running, not
+        an echo of what was requested.'''
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/system/upgrade',
+            json={
+                'progressPercent': 100, 'status': 'finished',
+                'metadata': {'version': '4.1.1'}, 'warnings': [],
+            },
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        status = dev.get_upgrade_status()
+
+        assert status.status == 'finished'
+        assert status.version == '4.1.1'
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/system/upgrade',
+            status_code=500,
+            text='error',
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.get_upgrade_status()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '500' in str(exc)
+
+
+class TestReboot:
+    def test_sends_timeout(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/system/reboot',
+            json={'statusCode': 200, 'error': 0},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        dev.reboot()
+
+        assert requests_mock.request_history[0].json() == {'timeout': 0}
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/system/reboot',
+            status_code=500,
+            text='error',
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.reboot()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '500' in str(exc)
+
+
+class TestUpgradeAndWait:
+    '''Pure orchestration coverage via monkeypatched start_upgrade()/
+    get_upgrade_status()/reboot() - avoids faking the HTTP/polling
+    timing just to test the wait/reboot/failure logic. time.sleep is
+    patched to a no-op so these tests don't actually wait.'''
+
+    def _device(self, monkeypatch, statuses):
+        '''statuses: UpgradeStatus values returned on successive
+        get_upgrade_status() calls - the last one repeats once
+        exhausted (so a run that never reaches "finished" keeps
+        returning it, letting the max_wait budget actually expire).'''
+        monkeypatch.setattr(uisp.time, 'sleep', lambda seconds: None)
+
+        dev = UispDevice('192.0.2.1')
+        dev.start_upgrade = lambda url, secure=False, timeout=0: None
+        dev.reboot = unittest.mock.MagicMock()
+
+        calls = iter(statuses)
+        dev.get_upgrade_status = lambda: next(calls, statuses[-1])
+        return dev
+
+    def test_returns_final_status_and_reboots_by_default(self, monkeypatch):
+        finished = UpgradeStatus(
+            status='finished', progress_percent=100, version='4.1.1', warnings=[],
+        )
+        dev = self._device(monkeypatch, [
+            UpgradeStatus(status='in_progress', progress_percent=0, version=None, warnings=[]),
+            finished,
+        ])
+
+        result = dev.upgrade_and_wait('https://example.invalid/fw.bin')
+
+        assert result is finished
+        dev.reboot.assert_called_once()
+
+    def test_none_status_right_after_start_is_not_treated_as_failure(self, monkeypatch):
+        '''Confirmed live against a real device: get_upgrade_status()
+        reports status=None when idle (no upgrade currently or ever in
+        flight) - including, potentially, on the very first poll right
+        after start_upgrade() returns, before the device has flipped
+        its status away from idle. This must poll on, not raise.'''
+        finished = UpgradeStatus(
+            status='finished', progress_percent=100, version='4.1.1', warnings=[],
+        )
+        dev = self._device(monkeypatch, [
+            UpgradeStatus(status=None, progress_percent=0, version=None, warnings=[]),
+            finished,
+        ])
+
+        result = dev.upgrade_and_wait('https://example.invalid/fw.bin')
+
+        assert result is finished
+
+    def test_reboot_false_skips_reboot(self, monkeypatch):
+        finished = UpgradeStatus(
+            status='finished', progress_percent=100, version='4.1.1', warnings=[],
+        )
+        dev = self._device(monkeypatch, [finished])
+
+        dev.upgrade_and_wait('https://example.invalid/fw.bin', reboot=False)
+
+        dev.reboot.assert_not_called()
+
+    def test_unexpected_status_raises_upgrade_failed(self, monkeypatch):
+        failed = UpgradeStatus(
+            status='failed', progress_percent=40, version=None, warnings=['disk full'],
+        )
+        dev = self._device(monkeypatch, [failed])
+
+        try:
+            dev.upgrade_and_wait('https://example.invalid/fw.bin')
+            raise AssertionError('expected UpgradeFailed')
+        except exceptions.UpgradeFailed as exc:
+            assert 'disk full' in str(exc)
+        dev.reboot.assert_not_called()
+
+    def test_timeout_raises_upgrade_failed(self, monkeypatch):
+        '''Never reaches "finished" within max_wait - this verifies
+        the elapsed-time budget is actually enforced, not just a
+        single iteration.'''
+        in_progress = UpgradeStatus(
+            status='in_progress', progress_percent=0, version=None, warnings=[],
+        )
+        dev = self._device(monkeypatch, [in_progress])
+
+        try:
+            dev.upgrade_and_wait('https://example.invalid/fw.bin', poll_interval=1, max_wait=2)
+            raise AssertionError('expected UpgradeFailed')
+        except exceptions.UpgradeFailed as exc:
+            assert 'did not finish' in str(exc)

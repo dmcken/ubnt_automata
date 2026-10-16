@@ -129,12 +129,54 @@ Confirmed endpoints (all need x-auth-token except public/device):
                                        the entire /services object back
                                        (read-modify-write), never a
                                        partial one.
+- system/upgrade (POST, GET)        - Start/poll a firmware upgrade -
+                                       see start_upgrade()/
+                                       get_upgrade_status()/
+                                       upgrade_and_wait(). Confirmed via
+                                       a captured HAR of a real Wave
+                                       Nano's own web UI applying an
+                                       official Ubiquiti release: POST
+                                       {"url", "secure", "timeout"}
+                                       starts it, and the device fetches
+                                       and flashes the image ITSELF from
+                                       that url - the ~27MB binary never
+                                       transits the browser/API client
+                                       at all, only this small trigger
+                                       call and small JSON/text calls
+                                       around it. That means url doesn't
+                                       have to be one of Ubiquiti's own
+                                       servers - any URL the device can
+                                       reach works identically, which is
+                                       the supported way to install a
+                                       specific/manually-downloaded
+                                       firmware file rather than
+                                       whatever the catalog currently
+                                       calls "latest" (see
+                                       ubnt_automata.firmware_catalog
+                                       for querying that catalog
+                                       directly - NOT via this device,
+                                       no device involved in that
+                                       lookup at all).
+- system/reboot (POST)              - Reboot the device - see reboot().
+                                       Confirmed the real web UI calls
+                                       this itself ~7s after an upgrade
+                                       reports "finished" (upgrade_and_
+                                       wait() does the same); unconfirmed
+                                       whether the device would
+                                       eventually reboot on its own
+                                       without it.
 
 Confirmed via HAR but NOT implemented (out of scope - not local
 telemetry, needs internet from the device):
 - tools/proxy/https (POST)   - Generic outbound-HTTPS relay to
-                                Ubiquiti's cloud (e.g. firmware update
-                                checks).
+                                Ubiquiti's cloud. The web UI uses this
+                                to reach fw-update.ubnt.com's firmware
+                                catalog (since a browser can't make
+                                that cross-origin call itself), but an
+                                ordinary Python caller doesn't need the
+                                device as a relay for that - see
+                                ubnt_automata.firmware_catalog, which
+                                queries the same catalog directly.
 
 Sensitive data warning: several config routes return secrets in plain
 text - confirmed live: wireless.interfaces[].encryption.passphrase
@@ -150,6 +192,7 @@ from __future__ import annotations
 # System imports
 import dataclasses
 import logging
+import time
 
 # External imports
 import requests
@@ -211,6 +254,26 @@ class UispDeviceStatus:
     peers: list[UispPeer]
 
 
+@dataclasses.dataclass
+class UpgradeStatus:
+    '''Progress of an in-flight (or just-finished) firmware upgrade
+    (system/upgrade's GET response).
+
+    `version` is only populated once `status` is "finished" - it's the
+    version the device confirms it's now running (under `metadata`),
+    not an echo of what was requested.
+
+    `status` is `None` (confirmed live) on a device with no upgrade
+    currently or ever in flight - upgrade_and_wait() treats this the
+    same as "in_progress" rather than a failure. No failure status has
+    been observed live - see get_upgrade_status()'s docstring.
+    '''
+    status: str | None
+    progress_percent: int
+    version: str | None
+    warnings: list[str]
+
+
 class UispDevice(airoscommon.AirOSCommonDevice):
     '''UISP-firmware device handler - covers every product line
     confirmed running this firmware generation (Wave AP/Pro/Nano/LR,
@@ -220,8 +283,11 @@ class UispDevice(airoscommon.AirOSCommonDevice):
     against those; get_mac_table()/get_discovery()/get_public_device()/
     getstatistics() work fine on any of them).
 
-    set_snmp() is the one confirmed write path (see its docstring).
-    change_password()/apply_changes() are still deliberately no-ops,
+    set_snmp() and the firmware-upgrade trio (start_upgrade()/
+    get_upgrade_status()/reboot(), or upgrade_and_wait() for a
+    blocking convenience wrapper) are the confirmed write paths (see
+    their docstrings) - change_password()/apply_changes() are still
+    deliberately no-ops,
     though, and never touch the device. Unlike AirFiber (see its module
     docstring), there's no known-equivalent endpoint to reuse for these -
     system/users (readable via compose()) confirmed live to NOT include
@@ -710,6 +776,197 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         entry = responses[0] if responses else {}
         if not (200 <= entry.get('statusCode', 0) < 300):
             raise RuntimeError(f"Error setting SNMP config: statusCode={entry.get('statusCode')}")
+
+    def start_upgrade(self, url: str, secure: bool = False, timeout: int = 0) -> None:
+        '''Start a firmware upgrade (system/upgrade, POST).
+
+        The device fetches and flashes the firmware itself from `url` -
+        confirmed live (HAR of a real Wave Nano's own web UI) that this
+        holds even for Ubiquiti's own ~27MB official images: the web
+        UI never transfers the binary itself, only this small trigger
+        call plus the small JSON/text calls needed to look up which
+        URL to use. That means `url` doesn't have to be one of
+        Ubiquiti's own servers - any URL the device can reach over the
+        network works identically. That's the supported way to apply
+        a specific/manually-downloaded firmware file instead of
+        whatever the catalog currently calls "latest": host the file
+        somewhere the device can reach (this library doesn't do that
+        part - it's deployment-specific) and pass that URL here.
+
+        Returns as soon as the device acknowledges the request - the
+        actual download+flash happens asynchronously. Poll
+        get_upgrade_status() for progress, or use upgrade_and_wait()
+        to block until it's done.
+
+        IMPORTANT: this writes to the device and can brick it if
+        interrupted or given a bad image - there is no dry-run/undo.
+
+        Args:
+            url: Firmware image URL, reachable BY THE DEVICE (not by
+                this machine) - e.g. one of Ubiquiti's own
+                fw-download.ubnt.com URLs (see
+                ubnt_automata.firmware_catalog), or any other HTTP(S)
+                URL serving the exact firmware you want installed.
+            secure: Whether the device should verify the URL's TLS
+                certificate. Confirmed live the real web UI sends
+                `false` even for an https:// Ubiquiti CDN URL - kept
+                as the default here to match observed behaviour.
+            timeout: Passed through verbatim in the request body - the
+                real web UI always sent 0 (confirmed live); no
+                evidence exists of what a nonzero value does.
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request
+                itself (e.g. malformed body) - NOT raised for an
+                upgrade that fails after starting; poll
+                get_upgrade_status() for that.
+        '''
+        res = self._post(
+            "system/upgrade",
+            json_body={'url': url, 'secure': secure, 'timeout': timeout},
+        )
+        if res.status_code != 200:
+            raise RuntimeError(f"Error starting upgrade: {res.status_code} {res.text}")
+
+    def get_upgrade_status(self) -> UpgradeStatus:
+        '''Current firmware upgrade progress (system/upgrade, GET).
+
+        Confirmed live: progressPercent stayed at 0 for the entire
+        download+flash (no granular progress reported, at least for a
+        Wave Nano's ~27MB image over a fast link - a slower link or
+        larger image may behave differently, unconfirmed), then jumped
+        straight to 100/"finished" alongside a `metadata.version`
+        confirming the version actually installed. Also confirmed
+        live, separately: a device with no upgrade currently or ever
+        in flight reports `status: None` (bare null, not a string) -
+        upgrade_and_wait() treats that the same as "in_progress". No
+        failure case has been observed live - status values other
+        than None/"in_progress"/"finished" are passed through as-is
+        rather than guessed at (see upgrade_and_wait(), which treats
+        anything else as failure).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            UpgradeStatus: Current upgrade progress.
+        '''
+        res = self._get("system/upgrade")
+        if res.status_code != 200:
+            raise RuntimeError(f"Error fetching upgrade status: {res.status_code} {res.text}")
+
+        data = res.json()
+        return UpgradeStatus(
+            status=data.get('status', ''),
+            progress_percent=data.get('progressPercent', 0),
+            version=data.get('metadata', {}).get('version'),
+            warnings=data.get('warnings', []),
+        )
+
+    def reboot(self, timeout: int = 0) -> None:
+        '''Reboot the device (system/reboot, POST).
+
+        Confirmed live: the real web UI calls this ~7 seconds after
+        get_upgrade_status() first reports "finished" - unconfirmed
+        whether the device would eventually reboot on its own without
+        it, so upgrade_and_wait() always sends it (matching observed
+        behaviour) unless told not to.
+
+        Args:
+            timeout: Passed through verbatim in the request body - the
+                real web UI always sent 0 (confirmed live).
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request.
+        '''
+        res = self._post("system/reboot", json_body={'timeout': timeout})
+        if res.status_code != 200:
+            raise RuntimeError(f"Error rebooting: {res.status_code} {res.text}")
+
+    def upgrade_and_wait(
+        self, url: str, secure: bool = False, reboot: bool = True,
+        poll_interval: float = 1.0, max_wait: float = 300.0,
+    ) -> UpgradeStatus:
+        '''Start a firmware upgrade and block until it finishes (or
+        fails/times out), optionally rebooting the device afterwards.
+
+        See start_upgrade() for what `url` can be (Ubiquiti's own CDN,
+        or any other reachable URL - this is how a specific/manually-
+        downloaded firmware file gets installed instead of whatever
+        the catalog currently calls "latest").
+
+        IMPORTANT: this writes to the device and can brick it if
+        interrupted or given a bad image - there is no dry-run/undo.
+        No failure status has been observed live (see
+        get_upgrade_status()), so this treats anything other than
+        "in_progress"/"finished" as a failure - a reasonable
+        assumption, not a confirmed one.
+
+        CONFIRMED LIVE HAZARD: upgrading a device running a BETA-
+        channel build (e.g. "4.1.0-BETA") straight to a release-
+        channel image triggered a kernel crash (getalerts() reported
+        KERNEL_CRASH) on one real Wave Nano - get_upgrade_status()
+        itself raised a connection-level timeout mid-poll rather than
+        this method cleanly raising UpgradeFailed. The device's own
+        watchdog recovered it on its own within ~2 minutes, back on
+        its ORIGINAL firmware (the new image hadn't been committed -
+        the safe half of this failure, not a brick), link
+        re-established cleanly. A second, identical attempt right
+        after succeeded cleanly with no crash. Only confirmed once -
+        unknown whether this is specific to a beta->release
+        transition, this one device, or a fluke - but callers
+        upgrading a device on a non-release build should be ready to
+        catch requests.exceptions.RequestException (not just
+        UpgradeFailed) around this call, check getalerts() /
+        get_status() afterwards even on an apparent connection
+        failure, and know that a clean retry is a reasonable response
+        rather than an escalation.
+
+        Args:
+            url: Firmware image URL - see start_upgrade().
+            secure: See start_upgrade().
+            reboot: Whether to call reboot() once the upgrade reports
+                "finished" - matches the real web UI's own observed
+                behaviour, but can be disabled to upgrade several
+                devices before rebooting any of them, or if the
+                device is confirmed to reboot on its own.
+            poll_interval: Seconds between get_upgrade_status() calls.
+            max_wait: Give up and raise if the upgrade hasn't reached
+                "finished" within this many seconds.
+
+        Raises:
+            exceptions.UpgradeFailed: Raised if the device reports
+                anything other than "in_progress"/"finished", or if
+                max_wait elapses first.
+
+        Returns:
+            UpgradeStatus: The final "finished" status.
+        '''
+        self.start_upgrade(url, secure=secure, timeout=0)
+
+        elapsed = 0.0
+        while elapsed < max_wait:
+            status = self.get_upgrade_status()
+            if status.status == 'finished':
+                if reboot:
+                    self.reboot()
+                return status
+            # None is the confirmed-live idle status (also seen before
+            # any upgrade has ever been triggered) - treated the same
+            # as "in_progress" rather than a failure, since the device
+            # may not have flipped its status away from it yet on the
+            # very first poll right after start_upgrade() returns.
+            if status.status not in (None, 'in_progress'):
+                raise exceptions.UpgradeFailed(
+                    f"Device {self._mgmt_ip} reported upgrade status "
+                    f"{status.status!r} (warnings: {status.warnings})"
+                )
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        raise exceptions.UpgradeFailed(
+            f"Device {self._mgmt_ip} did not finish upgrading within {max_wait}s"
+        )
 
     def get_status(self) -> UispDeviceStatus:
         '''Structured view of this device's own status and all connected
