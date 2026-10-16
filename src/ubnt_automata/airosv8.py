@@ -38,6 +38,21 @@ class AirOSv8UpgradeStatus:
     failure_reason: str
 
 
+@dataclasses.dataclass
+class FirmwareDownloadProgress:
+    '''Progress of an in-flight firmware download (api/fw/download,
+    POST action=progress) - the LTU-family counterpart to
+    AirOSv8UpgradeStatus/UpgradeStatus, confirmed live on an LTU-Lite.
+    A completely different shape again: status is an int (0 every time
+    observed, meaning in-progress/ok - no failure case confirmed
+    live), and percent climbs smoothly rather than jumping straight
+    from 0 to 100.
+    '''
+    status: int
+    percent: int
+    bytes_downloaded: int
+
+
 class AirOSv8(airoscommon.AirOSCommonDevice):
     '''Ubnt version 8 equipment handler.
 
@@ -87,7 +102,29 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
     GigaBeam LR - the Rocket Prism 5AC these other methods were
     confirmed against was never tested against it, and may simply 404
     (start_upgrade() surfaces that as a plain RuntimeError, not a
-    crash, either way).
+    crash, either way). CONFIRMED NOT the mechanism a real LTU-Lite's
+    own web UI actually uses, despite get_upgrade_status() responding
+    cleanly against one too (an idle "status": None, the same shape
+    GigaBeam reports) - that response alone doesn't mean start_upgrade()
+    is the right call for a given device; see download_and_upgrade()
+    below for what LTU-Lite's own web UI actually does instead.
+
+    Confirmed live against a real LTU-Lite (fw v2.3.2, upgrading to a
+    real v2.4.2): a THIRD, unrelated firmware-upgrade mechanism -
+    start_firmware_download()/get_firmware_download_progress(), or
+    download_and_upgrade() for a blocking wrapper - see each method's
+    docstring. Reuses commit_upgrade() unchanged for the actual flash +
+    reboot (confirmed live, same fwflash.cgi call, same ~2-3 minute
+    downtime). Everything else differs from GigaBeam's flow: plain
+    X-CSRF-ID auth throughout (no separate _auth_token needed), a
+    different pair of endpoints (api/fw/download, not api/v1.0/system/
+    upgrade), form-encoded rather than JSON bodies, and a progress poll
+    that's itself a POST, not a GET. CONFIRMED LIVE HAZARD: a device
+    with some prior stuck operation rejects a new download attempt
+    with {"status": 0, "error": "connection failed", "error_details":
+    "Operation already in progress"} (still an HTTP 200, so callers
+    checking only status_code won't notice) - a plain reboot cleared
+    this live.
 
     To implement:
     - /chanlist_active.cfg
@@ -586,6 +623,147 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         raise exceptions.UpgradeFailed(
             f"Device {self._mgmt_ip} did not finish staging the upgrade within {max_wait}s"
+        )
+
+    def start_firmware_download(self, fw_url: str, fw_checksum: str) -> None:
+        '''Start downloading a firmware image (api/fw/download, POST
+        action=download) - a THIRD, distinct upgrade mechanism from
+        both UispDevice's and this class's own start_upgrade(),
+        confirmed live via a captured HAR of a real LTU-Lite's own web
+        UI. Unlike start_upgrade()'s single url+secure body, this needs
+        the image's own md5 (as fw_checksum) alongside its URL -
+        confirmed live both come from the SAME firmware_catalog
+        release (fw_url=download_url, fw_checksum=md5). Uses the
+        ordinary X-CSRF-ID auth every other method on this class uses
+        (confirmed live) - no separate _auth_token needed, unlike
+        start_upgrade()/get_upgrade_status().
+
+        Returns as soon as the device acknowledges the request - the
+        actual download happens asynchronously, tracked via
+        get_firmware_download_progress(). See download_and_upgrade()
+        for a blocking helper that polls to completion and commits.
+
+        CONFIRMED LIVE HAZARD: a device with a stuck prior download
+        attempt rejects this (and even the read-only update-check
+        step this skips, see the module docstring note on
+        firmware_catalog's AFLTU entry) with a connection-level error
+        whose body is {"status": 0, "error": "connection failed",
+        "error_details": "Operation already in progress"} - a plain
+        reboot of the device cleared this live. Not raised as a
+        distinct exception here (status_code is still 200), so a
+        caller that parses the body itself should watch for it.
+
+        IMPORTANT: this writes to the device and can brick it if
+        interrupted or given a bad image - there is no dry-run/undo.
+
+        Args:
+            fw_url: Firmware image URL, reachable BY THE DEVICE - see
+                UispDevice.start_upgrade()'s docstring, same reasoning.
+            fw_checksum: The image's MD5 checksum (firmware_catalog's
+                FirmwareRelease.md5) - confirmed live the real web UI
+                always sends this alongside fw_url.
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request at
+                the HTTP level (non-200) - NOT raised for the
+                "Operation already in progress" case above, which is
+                still a 200.
+        '''
+        res = self._post("api/fw/download", data={
+            'action': 'download', 'fw_url': fw_url, 'fw_checksum': fw_checksum,
+        })
+        if res.status_code != 200:
+            raise RuntimeError(f"Error starting firmware download: {res.status_code} {res.text}")
+
+    def get_firmware_download_progress(self) -> FirmwareDownloadProgress:
+        '''Current firmware download progress (api/fw/download, POST
+        action=progress - a POST, not a GET, confirmed live).
+
+        Confirmed live: percent climbs smoothly from 0 to 100 (unlike
+        UispDevice's/this class's own get_upgrade_status(), which only
+        ever reported 0 until jumping straight to 100). status is 0
+        throughout an actual download, but confirmed live a device
+        with nothing in flight (no download ever started, or one
+        already finished) reports status=-1 instead - the same kind of
+        idle-vs-failure ambiguity as UispDevice's/this class's own
+        None status, and handled the same way: download_and_upgrade()
+        treats both 0 and -1 as "not failed" rather than raising,
+        since a transient -1 on the very first poll right after
+        start_firmware_download() would otherwise abort a perfectly
+        healthy download. No other status value has been observed
+        live.
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            FirmwareDownloadProgress: Current download progress.
+        '''
+        res = self._post("api/fw/download", data={'action': 'progress'})
+        if res.status_code != 200:
+            raise RuntimeError(f"Error fetching download progress: {res.status_code} {res.text}")
+
+        data = res.json()
+        return FirmwareDownloadProgress(
+            status=data.get('status', 0),
+            percent=data.get('percent', 0),
+            bytes_downloaded=data.get('bytes', 0),
+        )
+
+    def download_and_upgrade(
+        self, fw_url: str, fw_checksum: str,
+        poll_interval: float = 1.0, max_wait: float = 300.0,
+    ) -> FirmwareDownloadProgress:
+        '''Download a firmware image, wait for it to finish, then
+        commit it (flash + reboot) - the LTU-family counterpart to
+        upgrade_and_wait(), for devices confirmed to use api/fw/
+        download instead of api/v1.0/system/upgrade (see
+        start_firmware_download()'s docstring for how to tell which
+        one applies).
+
+        See start_firmware_download() for what fw_url/fw_checksum are
+        and where they come from (firmware_catalog's download_url/md5
+        for "latest", or any other reachable URL plus its own real MD5
+        for a specific/manually-downloaded file).
+
+        IMPORTANT: this writes to the device and can brick it if
+        interrupted or given a bad image - there is no dry-run/undo.
+
+        Args:
+            fw_url: See start_firmware_download().
+            fw_checksum: See start_firmware_download().
+            poll_interval: Seconds between
+                get_firmware_download_progress() calls.
+            max_wait: Give up and raise if the download hasn't reached
+                100% within this many seconds.
+
+        Raises:
+            exceptions.UpgradeFailed: Raised if the device reports a
+                status other than 0 (in-progress) or -1 (idle - see
+                get_firmware_download_progress()'s docstring), or if
+                max_wait elapses first.
+
+        Returns:
+            FirmwareDownloadProgress: The final 100%-complete status,
+                just before commit_upgrade() was called.
+        '''
+        self.start_firmware_download(fw_url, fw_checksum)
+
+        elapsed = 0.0
+        while elapsed < max_wait:
+            progress = self.get_firmware_download_progress()
+            if progress.status not in (0, -1):
+                raise exceptions.UpgradeFailed(
+                    f"Device {self._mgmt_ip} reported download status {progress.status!r}"
+                )
+            if progress.percent >= 100:
+                self.commit_upgrade()
+                return progress
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        raise exceptions.UpgradeFailed(
+            f"Device {self._mgmt_ip} did not finish downloading within {max_wait}s"
         )
 
     def enable_debug(self) -> None:

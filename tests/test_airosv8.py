@@ -12,7 +12,7 @@ import unittest.mock
 import pytest
 
 from ubnt_automata import airoscommon, exceptions
-from ubnt_automata.airosv8 import AirOSv8, AirOSv8UpgradeStatus
+from ubnt_automata.airosv8 import AirOSv8, AirOSv8UpgradeStatus, FirmwareDownloadProgress
 
 
 class TestLoginHttp:
@@ -508,3 +508,130 @@ class TestUpgradeAndWait:
 
         with pytest.raises(exceptions.UpgradeFailed, match='did not finish'):
             dev.upgrade_and_wait('https://example.invalid/fw.bin', poll_interval=1, max_wait=2)
+
+
+class TestStartFirmwareDownload:
+    '''Confirmed live (LTU-Lite): a THIRD, unrelated upgrade mechanism
+    - plain X-CSRF-ID auth (not the separate _auth_token
+    start_upgrade() needs), form-encoded body, and its own
+    api/fw/download endpoint rather than api/v1.0/system/upgrade.'''
+
+    def test_sends_fw_url_and_checksum_via_csrf_not_auth_token(self, requests_mock):
+        requests_mock.post(
+            'http://192.0.2.1/api/fw/download',
+            json={'status': 0, 'message': 'OK'},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.start_firmware_download('https://example.invalid/fw.bin', 'fake-md5-checksum')
+
+        sent = requests_mock.request_history[0]
+        assert 'action=download' in sent.text
+        assert 'fw_url=' in sent.text
+        assert 'fw_checksum=fake-md5-checksum' in sent.text
+        assert sent.headers['X-CSRF-ID'] == 'fake-csrf-id'
+        assert 'x-auth-token' not in sent.headers
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/api/fw/download', status_code=400, text='bad request')
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        with pytest.raises(RuntimeError, match='400'):
+            dev.start_firmware_download('https://example.invalid/fw.bin', 'fake-md5-checksum')
+
+
+class TestGetFirmwareDownloadProgress:
+    def test_sends_action_progress_via_post(self, requests_mock):
+        requests_mock.post(
+            'http://192.0.2.1/api/fw/download',
+            json={'status': 0, 'percent': 43, 'bytes': 10493952},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        progress = dev.get_firmware_download_progress()
+
+        assert progress == FirmwareDownloadProgress(status=0, percent=43, bytes_downloaded=10493952)
+        sent = requests_mock.request_history[0]
+        assert sent.method == 'POST'
+        assert 'action=progress' in sent.text
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/api/fw/download', status_code=500, text='error')
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        with pytest.raises(RuntimeError, match='500'):
+            dev.get_firmware_download_progress()
+
+
+class TestDownloadAndUpgrade:
+    '''Pure orchestration coverage via monkeypatched
+    start_firmware_download()/get_firmware_download_progress()/
+    commit_upgrade() - avoids faking the HTTP/polling timing. time.sleep
+    is patched to a no-op.'''
+
+    def _device(self, monkeypatch, progress_sequence):
+        from ubnt_automata import airosv8 as airosv8_module
+        monkeypatch.setattr(airosv8_module.time, 'sleep', lambda seconds: None)
+
+        dev = AirOSv8('192.0.2.1')
+        dev.start_firmware_download = lambda fw_url, fw_checksum: None
+        dev.commit_upgrade = unittest.mock.MagicMock()
+
+        calls = iter(progress_sequence)
+        dev.get_firmware_download_progress = lambda: next(calls, progress_sequence[-1])
+        return dev
+
+    def test_commits_once_download_reaches_100_percent(self, monkeypatch):
+        finished = FirmwareDownloadProgress(status=0, percent=100, bytes_downloaded=24366210)
+        dev = self._device(monkeypatch, [
+            FirmwareDownloadProgress(status=0, percent=43, bytes_downloaded=10493952),
+            finished,
+        ])
+
+        result = dev.download_and_upgrade('https://example.invalid/fw.bin', 'fake-md5')
+
+        assert result is finished
+        dev.commit_upgrade.assert_called_once()
+
+    def test_idle_status_minus_one_is_not_treated_as_failure(self, monkeypatch):
+        '''Confirmed live against a real device: get_firmware_download_
+        progress() reports status=-1 when idle (no download currently
+        or ever in flight) - including, potentially, on the very first
+        poll right after start_firmware_download() returns, before the
+        device has flipped its status away from idle. This must poll
+        on, not raise - the same bug class already caught once for
+        UispDevice's/this class's own None status.'''
+        finished = FirmwareDownloadProgress(status=0, percent=100, bytes_downloaded=24366210)
+        dev = self._device(monkeypatch, [
+            FirmwareDownloadProgress(status=-1, percent=0, bytes_downloaded=0),
+            finished,
+        ])
+
+        result = dev.download_and_upgrade('https://example.invalid/fw.bin', 'fake-md5')
+
+        assert result is finished
+
+    def test_non_zero_non_idle_status_raises_upgrade_failed(self, monkeypatch):
+        failed = FirmwareDownloadProgress(status=1, percent=40, bytes_downloaded=0)
+        dev = self._device(monkeypatch, [failed])
+
+        with pytest.raises(exceptions.UpgradeFailed, match='1'):
+            dev.download_and_upgrade('https://example.invalid/fw.bin', 'fake-md5')
+        dev.commit_upgrade.assert_not_called()
+
+    def test_timeout_raises_upgrade_failed(self, monkeypatch):
+        stuck = FirmwareDownloadProgress(status=0, percent=43, bytes_downloaded=10493952)
+        dev = self._device(monkeypatch, [stuck])
+
+        with pytest.raises(exceptions.UpgradeFailed, match='did not finish'):
+            dev.download_and_upgrade(
+                'https://example.invalid/fw.bin', 'fake-md5', poll_interval=1, max_wait=2,
+            )
