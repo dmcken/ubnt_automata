@@ -825,6 +825,45 @@ class TestUploadAndUpgrade:
         assert self.FW_BYTES in upload_req.body
         assert any(r.path == '/fwflash.cgi' for r in requests_mock.request_history)
 
+    def test_firmware_data_skips_the_network_fetch(self, requests_mock):
+        '''The ui_download_catalog.FirmwareCache bulk-upgrade path -
+        no requests_mock registration for the dl.ubnt.com download_url
+        at all, so a fetch attempt would raise ConnectionError and
+        fail the test, proving it's genuinely skipped, not just
+        unasserted.'''
+        self._mock_update_available(requests_mock)
+        requests_mock.post(
+            'http://192.0.2.1/fwupl.cgi',
+            json={'isThirdParty': False, 'version': 'WA.v8.7.25', 'code': 0},
+        )
+        requests_mock.post('http://192.0.2.1/fwflash.cgi', json={'ok': True, 'code': 0})
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        info = dev.upload_and_upgrade(firmware_data=self.FW_BYTES)
+
+        assert info.version == 'v8.7.25'
+        upload_req = next(r for r in requests_mock.request_history if r.path == '/fwupl.cgi')
+        assert self.FW_BYTES in upload_req.body
+        assert any(r.path == '/fwflash.cgi' for r in requests_mock.request_history)
+
+    def test_firmware_data_checksum_mismatch_raises_upgrade_failed_without_uploading(
+        self, requests_mock,
+    ):
+        '''Supplying pre-fetched bytes (e.g. the wrong board's cached
+        image) doesn't weaken the checksum check - it still runs
+        against whatever bytes end up used, fetched or supplied.'''
+        self._mock_update_available(requests_mock, checksum='0' * 32)
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        with pytest.raises(exceptions.UpgradeFailed, match='checksum'):
+            dev.upload_and_upgrade(firmware_data=self.FW_BYTES)
+
+        assert not any(r.path == '/fwupl.cgi' for r in requests_mock.request_history)
+
     def test_no_update_available_raises_upgrade_failed(self, requests_mock):
         requests_mock.post('http://192.0.2.1/api/fw/update-check', json={'update': False})
         dev = AirOSv8('192.0.2.1')

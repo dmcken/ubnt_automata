@@ -189,7 +189,15 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
     modern catalog does - only the device's own reported file is
     confirmed to upload and flash correctly, so upload_and_upgrade()
     never uses firmware_catalog for this family (see
-    FirmwareUpdateInfo's docstring).
+    FirmwareUpdateInfo's docstring). For a bulk run across many
+    devices of the same board revision, see
+    ubnt_automata.ui_download_catalog - a THIRD source (confirmed live
+    separately, unauthenticated, labels board revision explicitly) fit
+    for fetching the image client-side ONCE instead of once per
+    device; upload_and_upgrade()'s firmware_data parameter still
+    checks whatever it's given against this device's own reported
+    checksum regardless, so using that source doesn't weaken this
+    safety check.
 
     To implement:
     - /chanlist_active.cfg
@@ -949,11 +957,12 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         if result.get('code', 0) != 0:
             raise RuntimeError(f"Device {self._mgmt_ip} rejected the uploaded firmware: {result}")
 
-    def upload_and_upgrade(self, fetch_timeout: int = 120) -> FirmwareUpdateInfo:
-        '''Check for an update, fetch it CLIENT-SIDE (from wherever
-        this code runs, not the device), upload it directly, then
-        commit it (flash + reboot) - confirmed live end-to-end on a
-        real NanoStation 5AC loco (classic airMAX AC).
+    def upload_and_upgrade(
+        self, fetch_timeout: int = 120, firmware_data: bytes | None = None,
+    ) -> FirmwareUpdateInfo:
+        '''Check for an update, obtain the image, upload it directly,
+        then commit it (flash + reboot) - confirmed live end-to-end on
+        a real NanoStation 5AC loco (classic airMAX AC).
 
         This is NOT the same shape as either upgrade_and_wait()
         (GigaBeam) or download_and_upgrade() (LTU), both of which hand
@@ -969,22 +978,34 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
 
         IMPORTANT: this writes to the device and can brick it if
         interrupted or given a bad image - there is no dry-run/undo.
-        Fetches the real firmware bytes over the network from
-        Ubiquiti's own legacy distribution host (dl.ubnt.com, per
-        check_firmware_update()) - verifies the download against the
-        checksum that call reported before uploading anything.
+        By default fetches the real firmware bytes over the network
+        from Ubiquiti's own legacy distribution host (dl.ubnt.com, per
+        check_firmware_update()) - verifies the bytes actually used
+        (fetched here, or supplied via firmware_data) against the
+        checksum check_firmware_update() reported before uploading
+        anything, either way.
 
         Args:
             fetch_timeout: Seconds to allow for fetching the firmware
                 bytes (a ~10MB file, confirmed live) - separate from
                 this device's own self._timeout, which governs each
-                individual device-facing HTTP call instead.
+                individual device-facing HTTP call instead. Unused if
+                firmware_data is given.
+            firmware_data: Pre-obtained firmware bytes to upload
+                directly instead of fetching info.download_url again -
+                e.g. a ui_download_catalog.FirmwareCache hit. Skips
+                the network fetch, NOT the checksum check below, which
+                still runs against whatever bytes end up used. Built
+                for a bulk upgrade run across many devices of the same
+                board revision, where fetching the same image once per
+                device is needlessly slow at fleet scale.
 
         Raises:
             exceptions.UpgradeFailed: Raised if no update is available,
-                or if the fetched bytes don't match the reported
+                or if the bytes used don't match the reported
                 checksum.
-            RuntimeError: Raised if the fetch itself fails, or if
+            RuntimeError: Raised if fetching info.download_url fails
+                (only possible when firmware_data isn't given), or if
                 upload_firmware()/commit_upgrade() report failure (see
                 their own docstrings).
 
@@ -995,21 +1016,23 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         if not info.update_available:
             raise exceptions.UpgradeFailed(f"Device {self._mgmt_ip} reports no update available")
 
-        fetch_res = requests.get(info.download_url, timeout=fetch_timeout)
-        if fetch_res.status_code != 200:
-            raise RuntimeError(
-                f"Error fetching firmware from {info.download_url}: {fetch_res.status_code}"
-            )
+        if firmware_data is None:
+            fetch_res = requests.get(info.download_url, timeout=fetch_timeout)
+            if fetch_res.status_code != 200:
+                raise RuntimeError(
+                    f"Error fetching firmware from {info.download_url}: {fetch_res.status_code}"
+                )
+            firmware_data = fetch_res.content
 
-        actual_checksum = hashlib.md5(fetch_res.content).hexdigest()
+        actual_checksum = hashlib.md5(firmware_data).hexdigest()
         if info.checksum and actual_checksum != info.checksum:
             raise exceptions.UpgradeFailed(
-                f"Fetched firmware checksum {actual_checksum} does not match "
+                f"Firmware checksum {actual_checksum} does not match "
                 f"the {info.checksum} {self._mgmt_ip} itself reported - refusing to upload it"
             )
 
         filename = info.download_url.rsplit('/', 1)[-1]
-        self.upload_firmware(fetch_res.content, filename)
+        self.upload_firmware(firmware_data, filename)
         self.commit_upgrade()
         return info
 
