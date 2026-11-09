@@ -2,6 +2,7 @@
 (get_link_status()), config parsing, and the capacity-unit heuristic.'''
 import pytest
 
+from ubnt_automata import exceptions
 from ubnt_automata.airfiber5x import AirFiber
 
 
@@ -230,25 +231,82 @@ class TestApplyChanges:
 
 
 class TestWritecfg:
-    def test_success(self, requests_mock):
-        requests_mock.post('http://192.0.2.1/writecfg.cgi', json={'ok': True})
+    '''writecfg() posts the FULL device config (existing keys fetched
+    via getcfg() overlaid with the given changes), and the real
+    writecfg.cgi response has no "ok" key - see
+    airoscommon.WriteCfgResult's docstring for why (confirmed live via
+    HAR capture against a real AirFiber 5X HD).'''
+
+    def _device(self, requests_mock, existing_cfg='netconf.1.mtu=1500'):
+        requests_mock.get('http://192.0.2.1/getcfg.cgi', text=existing_cfg)
         dev = AirFiber('192.0.2.1')
         dev._is_ssl = False
         dev._csrf_id = 'fake-csrf-id'
+        return dev
 
-        dev.writecfg({'radio.0.mode': 'ap-ptp'})
+    def test_success(self, requests_mock):
+        requests_mock.post(
+            'http://192.0.2.1/writecfg.cgi',
+            json={'centMgmtStatus': 0, 'fast_restart': False, 'code': 0},
+        )
+        dev = self._device(requests_mock)
 
-        sent = requests_mock.request_history[0]
+        result = dev.writecfg({'radio.0.mode': 'ap-ptp'})
+
+        assert result.success is True
+        assert result.fast_restart is False
+        sent = requests_mock.request_history[-1]
         assert 'radio.0.mode%3Dap-ptp' in sent.text or 'radio.0.mode=ap-ptp' in sent.text
+        # the pre-existing key fetched via getcfg() must still be present -
+        # writecfg.cgi replaces the whole config, not a diff
+        assert 'netconf.1.mtu' in sent.text
 
     def test_failure_is_logged_not_raised(self, requests_mock, caplog):
-        requests_mock.post('http://192.0.2.1/writecfg.cgi', json={'ok': False})
-        dev = AirFiber('192.0.2.1')
-        dev._is_ssl = False
-        dev._csrf_id = 'fake-csrf-id'
+        requests_mock.post(
+            'http://192.0.2.1/writecfg.cgi',
+            json={'centMgmtStatus': 0, 'fast_restart': False, 'code': 1},
+        )
+        dev = self._device(requests_mock)
 
         with caplog.at_level('ERROR'):
-            dev.writecfg({'radio.0.mode': 'ap-ptp'})  # must not raise
+            result = dev.writecfg({'radio.0.mode': 'ap-ptp'})  # must not raise
+
+        assert result.success is False
+
+    def test_fast_restart_is_reported(self, requests_mock):
+        requests_mock.post(
+            'http://192.0.2.1/writecfg.cgi',
+            json={'centMgmtStatus': 0, 'fast_restart': True, 'code': 0},
+        )
+        dev = self._device(requests_mock)
+
+        result = dev.writecfg({'ame.net.jumbo': 'enabled'})
+
+        assert result.success is True
+        assert result.fast_restart is True
+
+    def test_avoid_fast_restart_refuses_known_key_without_sending(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/writecfg.cgi', json={'code': 0})
+        dev = self._device(requests_mock)
+
+        with pytest.raises(exceptions.FastRestartRequired):
+            dev.writecfg({'ame.net.jumbo': 'enabled'}, avoid_fast_restart=True)
+
+        # refused before sending - no writecfg.cgi call, not even a getcfg one
+        assert not any(
+            r.url.endswith('writecfg.cgi') for r in requests_mock.request_history
+        )
+
+    def test_avoid_fast_restart_allows_unknown_key(self, requests_mock):
+        requests_mock.post(
+            'http://192.0.2.1/writecfg.cgi',
+            json={'centMgmtStatus': 0, 'fast_restart': False, 'code': 0},
+        )
+        dev = self._device(requests_mock)
+
+        result = dev.writecfg({'radio.0.mode': 'ap-ptp'}, avoid_fast_restart=True)
+
+        assert result.success is True
 
 
 class TestGetWireless:
