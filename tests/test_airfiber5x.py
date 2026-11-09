@@ -6,6 +6,50 @@ from ubnt_automata import exceptions
 from ubnt_automata.airfiber5x import AirFiber
 
 
+class TestLoginHttp:
+    def test_non_200_401_raises_wrong_password(self, requests_mock):
+        requests_mock.get('https://192.0.2.1/', status_code=200)
+        requests_mock.post('https://192.0.2.1/api/auth', status_code=401, json={})
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = True
+
+        with pytest.raises(exceptions.WrongPassword):
+            dev.login_http('wrong-password', 'ubnt')
+
+    def test_rate_limited_raises_unexpected_not_wrong_password(self, requests_mock):
+        '''A 429 (or any non-auth non-200) must NOT raise WrongPassword -
+        confirmed live that doing so made login()'s alternate-password
+        retry loop cascade through every password while a device was
+        rate-limiting, making it worse instead of surfacing the real
+        cause.'''
+        requests_mock.get('https://192.0.2.1/', status_code=200)
+        requests_mock.post(
+            'https://192.0.2.1/api/auth', status_code=429, text='Too Many Requests',
+        )
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = True
+
+        with pytest.raises(exceptions.UnexpectedLoginResponse) as excinfo:
+            dev.login_http('correct-password', 'ubnt')
+
+        assert excinfo.value.status_code == 429
+
+    def test_success_stores_csrf_id(self, requests_mock):
+        requests_mock.get('https://192.0.2.1/', status_code=200)
+        requests_mock.post(
+            'https://192.0.2.1/api/auth',
+            status_code=200,
+            json={'boardinfo': {'board.name': 'airFiber 5X HD'}},
+            headers={'X-CSRF-ID': 'abc123'},
+        )
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = True
+
+        dev.login_http('correct-password', 'ubnt')
+
+        assert dev._csrf_id == 'abc123'
+
+
 def _device_with_status(status):
     '''A real AirFiber instance with getstatus() monkeypatched to
     return a fixture payload instead of making an HTTP call - avoids

@@ -99,6 +99,24 @@ class TestLoginHttp:
         with pytest.raises(exceptions.DeviceUnavailable):
             dev.login_http('any-password', 'ubnt')
 
+    def test_rate_limited_raises_unexpected_not_wrong_password(self, requests_mock):
+        '''A 429 (or any non-auth non-200) must NOT raise WrongPassword -
+        confirmed live that doing so made login()'s alternate-password
+        retry loop cascade through every password while a device was
+        rate-limiting, making it worse instead of surfacing the real
+        cause.'''
+        requests_mock.get('http://192.0.2.1/', status_code=200)
+        requests_mock.post(
+            'http://192.0.2.1/api/auth', status_code=429, text='Too Many Requests',
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+
+        with pytest.raises(exceptions.UnexpectedLoginResponse) as excinfo:
+            dev.login_http('correct-password', 'ubnt')
+
+        assert excinfo.value.status_code == 429
+
 
 class TestGetAndPostHelpers:
     '''The dedup pass added these to remove 8 repeated inline

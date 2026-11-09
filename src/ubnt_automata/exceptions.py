@@ -8,6 +8,28 @@ class WrongPassword(Exception):
 class UpgradeFailed(Exception):
     '''Exception to handle a firmware upgrade that failed, or didn't
     reach "finished" within the allotted wait time'''
+class UnexpectedLoginResponse(Exception):
+    '''Raised by login_http() for a non-200 /api/auth response that
+    ISN'T a real credential rejection (401/403) - e.g. 429 (rate
+    limited), 5xx, or anything else. Deliberately NOT a WrongPassword
+    subclass/sibling caught by login()'s alternate-password retry loop:
+    confirmed live that treating every non-200 as "wrong password" (the
+    prior behavior) makes a transient problem like rate-limiting worse,
+    since login() would then cascade through every password in the
+    list - each one another POST - instead of surfacing the real cause
+    immediately. Carries the actual status_code and response body so a
+    caller (or a human reading the exception message) can tell "bad
+    credentials" from "device is rate-limiting/erroring" without
+    needing to read this library's source to find out.'''
+    def __init__(self, status_code: int, body: str = ''):
+        self.status_code = status_code
+        self.body = body
+        super().__init__(
+            f"Unexpected non-200 response from /api/auth: "
+            f"{status_code} - this is NOT necessarily a wrong "
+            f"password, see UnexpectedLoginResponse's docstring "
+            f"(body: {body[:200]!r})"
+        )
 class FastRestartRequired(Exception):
     '''Raised by writecfg() when avoid_fast_restart=True and the
     config being written contains a key already known (see

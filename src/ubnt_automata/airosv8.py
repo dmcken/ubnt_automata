@@ -281,7 +281,18 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             curr_user (str, optional): Username to use for login. Defaults to None.
 
         Raises:
-            exceptions.WrongPassword: Thrown if the login fails for authentication reasons.
+            exceptions.WrongPassword: The device actually rejected
+                these credentials (401/403).
+            exceptions.UnexpectedLoginResponse: Any other non-200 -
+                429 (rate limited), 5xx, etc. Confirmed live on the
+                AirFiber class (which this module documents as
+                sharing this exact auth mechanism): treating every
+                non-200 as WrongPassword is actively harmful, since
+                login()'s alternate-password retry loop only stops on
+                WrongPassword - a transient rate-limit would
+                previously cascade into trying every password in the
+                list, each one another POST, making the rate-limiting
+                worse instead of surfacing the real problem.
             exceptions.DeviceUnavailable: Thrown if the login fails for connectivity reasons.
         """
         try:
@@ -307,9 +318,15 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 verify=self._verify_ssl,
             )
 
-            if rez.status_code != 200:
-                logger.debug(f"Error logging in: {rez.json()['error']}")
+            if rez.status_code in (401, 403):
+                logger.debug(f"Wrong password for {self._mgmt_ip}: {rez.status_code}")
                 raise exceptions.WrongPassword()
+            if rez.status_code != 200:
+                logger.warning(
+                    f"Unexpected (non-auth) login response from {self._mgmt_ip}: "
+                    f"{rez.status_code}"
+                )
+                raise exceptions.UnexpectedLoginResponse(rez.status_code, rez.text)
 
             # Successful login - save the parameters
             self._curr_username = curr_user
