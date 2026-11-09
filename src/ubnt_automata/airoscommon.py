@@ -13,6 +13,43 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
+class WriteCfgResult:
+    '''Result of AirOSv8.writecfg()/AirFiber.writecfg() - confirmed
+    live (HAR capture against real AirFiber 5X HD firmware) that
+    writecfg.cgi's actual response shape is
+    {"centMgmtStatus": int, "fast_restart": bool, "code": int} -
+    there is no "ok" key, despite both classes' pre-existing code
+    assuming one (that assumption was never confirmed live and was
+    simply wrong - see git history). success is defined as code == 0.
+
+    fast_restart=True means this write makes the device restart its
+    networking immediately as part of applying the change - not a
+    power-cycle reboot, but confirmed live to drop the link for
+    roughly 15-20s while it does. writecfg()'s avoid_fast_restart
+    param exists to let a caller opt out of that for known-risky keys
+    (see _KNOWN_FAST_RESTART_KEYS below) before it happens, but this
+    field is always populated so a caller can also detect it
+    happening for a key not yet in that set.
+    '''
+    success: bool
+    fast_restart: bool
+    raw: dict
+
+
+# Config keys confirmed live (HAR capture, AirFiber 5X HD) to set
+# fast_restart=true in writecfg.cgi's response - i.e. applying them
+# drops the wireless link for ~15-20s. Starts with just the one we've
+# actually observed; add to this as more are confirmed rather than
+# guessing, since an under-inclusive set here just means
+# avoid_fast_restart misses a case writecfg()'s return value will
+# still report after the fact - an over-inclusive one would wrongly
+# block safe changes.
+_KNOWN_FAST_RESTART_KEYS = frozenset({
+    'ame.net.jumbo',
+})
+
+
+@dataclasses.dataclass
 class GPSFix:
     '''GPS fix as reported by a Ubiquiti device (AirFiber's status.cgi,
     UISP-firmware's statistics/peers) - both APIs report the exact same

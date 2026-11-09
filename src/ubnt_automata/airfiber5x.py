@@ -304,9 +304,14 @@ class AirFiber(airoscommon.AirOSCommonDevice):
     def apply_changes(self, test_mode=False) -> None:
         '''Apply pending changes (test_mode.cgi).
 
-        Mirrors AirOSv8.apply_changes() exactly - see change_password()'s
-        docstring for why, and the same "not independently confirmed
-        live" caveat applies here too.
+        STILL not independently confirmed live: a real writecfg.cgi
+        call (HAR capture, AirFiber 5X HD, enabling ame.net.jumbo) was
+        immediately followed by the device restarting networking on
+        its own - no call to test_mode.cgi happened anywhere in that
+        flow. So at least for changes that set fast_restart=true in
+        writecfg()'s result, this method is not part of the sequence
+        at all; it's left as-is (unverified) for whatever flow it was
+        originally written for.
         '''
         rez = self._get("test_mode.cgi")
 
@@ -320,17 +325,60 @@ class AirFiber(airoscommon.AirOSCommonDevice):
         except json.decoder.JSONDecodeError:
             logger.error(f"Error decoding json in apply changes: {rez.content}")
 
-    def writecfg(self, cfgdata: dict[str, str]) -> None:
+    def writecfg(
+        self, cfgdata: dict[str, str], avoid_fast_restart: bool = False,
+    ) -> airoscommon.WriteCfgResult:
         '''Write config to the device (writecfg.cgi).
 
-        Mirrors AirOSv8.writecfg() exactly - same caveat as
-        change_password(): not independently confirmed live yet.
+        Confirmed live (HAR capture, AirFiber 5X HD, enabling
+        ame.net.jumbo) - corrected from the prior unverified
+        implementation on two points:
+
+        1. writecfg.cgi replaces the ENTIRE device config, not a
+           diff - the real request posts all ~220 existing keys with
+           the changed ones overlaid, not just the changed ones. This
+           method now does that for you: pass only the keys you want
+           changed, it fetches the current config and overlays them.
+        2. The real response shape is
+           {"centMgmtStatus": int, "fast_restart": bool, "code": int}
+           - there is no "ok" key (the prior code's `write_result['ok']`
+           would have raised KeyError on every real call - confirmed,
+           this is exactly what happened in testing). Success is
+           code == 0.
 
         Args:
-            cfgdata: Config to set on the device, in the same flat
-                key=value shape getcfg() returns.
+            cfgdata: The keys to change, in the same flat key=value
+                shape getcfg() returns - NOT the full config, this
+                method builds that for you.
+            avoid_fast_restart: If True, refuses to send the request
+                at all when cfgdata contains a key already confirmed
+                (see airoscommon._KNOWN_FAST_RESTART_KEYS) to make the
+                device restart networking and drop the link for
+                ~15-20s - raises exceptions.FastRestartRequired
+                instead. This is a known-keys allowlist, not a
+                guarantee: a key not yet in that set can still come
+                back with fast_restart=true in the result, so check
+                the return value either way.
+
+        Returns:
+            airoscommon.WriteCfgResult
+
+        Raises:
+            exceptions.FastRestartRequired: avoid_fast_restart=True and
+                cfgdata contains a key known to trigger one.
         '''
-        lines = [f"{key}={value}" for key, value in cfgdata.items()]
+        if avoid_fast_restart:
+            risky = set(cfgdata) & airoscommon._KNOWN_FAST_RESTART_KEYS
+            if risky:
+                raise exceptions.FastRestartRequired(
+                    f"Refusing write to {self._mgmt_ip}: "
+                    f"{sorted(risky)} is known to trigger fast_restart "
+                    "(wireless link will drop ~15-20s while it applies)"
+                )
+
+        full_cfg = dict(self.getcfg())
+        full_cfg.update(cfgdata)
+        lines = [f"{key}={value}" for key, value in full_cfg.items()]
         logger.debug(f"Writecfg lines: {pprint.pformat(lines)}")
         cfg_output = "\r\n".join(lines)
 
@@ -338,13 +386,22 @@ class AirFiber(airoscommon.AirOSCommonDevice):
 
         try:
             write_result = rez.json()
-
-            if write_result['ok'] is True:
-                return
-
-            logger.error(f"Error writing config: {write_result}")
         except json.decoder.JSONDecodeError:
             logger.error(f"Error decoding json in writecfg: {rez.content}")
+            return airoscommon.WriteCfgResult(success=False, fast_restart=False, raw={})
+
+        success = write_result.get('code') == 0
+        fast_restart = bool(write_result.get('fast_restart'))
+        if not success:
+            logger.error(f"Error writing config: {write_result}")
+        if fast_restart:
+            logger.warning(
+                f"writecfg on {self._mgmt_ip} set fast_restart=true - "
+                "wireless link will drop briefly while it applies"
+            )
+        return airoscommon.WriteCfgResult(
+            success=success, fast_restart=fast_restart, raw=write_result,
+        )
 
     def getstatus(self) -> dict:
         """Get the device status (status.cgi).
