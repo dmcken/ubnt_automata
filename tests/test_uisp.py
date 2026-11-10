@@ -270,6 +270,100 @@ class TestGetServices:
             pass
 
 
+class TestGetSiteSurveyStatus:
+    '''Confirmed live via HAR capture (Wave-LR): 'main' and 'backup'
+    don't even share a response shape - 'main' is a per-neighbour list,
+    'backup' is a channel-utilization spectrum scan.'''
+
+    def test_defaults_to_main_radio(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/tools/site-survey/main',
+            json={'status': 'completed', 'results': [{'ssid': 'TWT-WAP-W', 'signal': -51}]},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        result = dev.get_site_survey_status()
+
+        assert result['results'][0]['ssid'] == 'TWT-WAP-W'
+
+    def test_backup_radio_returns_utilization_shape(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/tools/site-survey/backup',
+            json={'status': 'completed', 'utilization': [{'frequency': 5260, 'usage': 4}]},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        result = dev.get_site_survey_status(radio='backup')
+
+        assert result['utilization'] == [{'frequency': 5260, 'usage': 4}]
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/api/v1.0/tools/site-survey/main',
+            status_code=400, text='bad request',
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.get_site_survey_status()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '400' in str(exc)
+
+
+class TestTriggerSiteSurvey:
+    '''Confirmed live via HAR capture (Wave-LR, both radios) - this is
+    the disruptive one, unlike get_site_survey_status() above.'''
+
+    def test_sends_radio_id(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/site-survey/start',
+            json={'statusCode': 200, 'error': 0},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        dev.trigger_site_survey(radio='backup')
+
+        sent = requests_mock.request_history[0].json()
+        assert sent == {'id': 'backup'}
+
+    def test_defaults_to_main_radio(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/site-survey/start',
+            json={'statusCode': 200, 'error': 0},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        dev.trigger_site_survey()
+
+        assert requests_mock.request_history[0].json() == {'id': 'main'}
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/site-survey/start',
+            status_code=400, text='bad request',
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        try:
+            dev.trigger_site_survey()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '400' in str(exc)
+
+
 class TestSetSnmp:
     '''Locks in the read-modify-write shape confirmed via a captured HAR
     of a real Wave AP's own web UI setting its SNMP agent: GET the full

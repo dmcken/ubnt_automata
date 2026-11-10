@@ -604,26 +604,76 @@ class UispDevice(airoscommon.AirOSCommonDevice):
 
         raise RuntimeError(f"Error fetching MAC table: {res.status_code} {res.text}")
 
-    def get_site_survey_status(self) -> dict:
-        '''Site survey status only (tools/site-survey/main).
+    def get_site_survey_status(self, radio: str = 'main') -> dict:
+        '''Site survey status/results for one radio (tools/site-survey/
+        {radio}).
 
-        Deliberately never triggers a scan - only reports current
-        status (e.g. {"status": "not_started"}) - starting one changes
-        the device's wireless behaviour, out of scope for fetch-only.
-        Confirmed working on a Wave AP and a PtP-configured Wave Pro.
+        Deliberately never triggers a scan - only reports whatever the
+        device already has cached from the last scan anyone ran
+        (manually via the UI, or via trigger_site_survey() below) -
+        starting one changes the device's wireless behaviour (see that
+        method), out of scope for fetch-only. Confirmed working on a
+        Wave AP, a PtP-configured Wave Pro, and a Wave-LR - a cached
+        result survives at least until the next device reboot, so a
+        device someone has ever manually surveyed may already have
+        useful data available here with zero risk.
+
+        Args:
+            radio: 'main' (this device's primary radio - the only one
+                on a single-radio device) or 'backup' (the secondary
+                5GHz radio on a hybrid 60GHz+5GHz device like Wave-LR -
+                only meaningful there). Confirmed live (HAR capture,
+                Wave-LR) that the two don't even return the same
+                shape: 'main' gives a per-neighbour list (ssid/bssid/
+                signal/frequency/encryption/isPTP under "results");
+                'backup' gives a channel-utilization spectrum scan
+                instead (frequency/usage pairs under "utilization"),
+                no discrete neighbour-AP list.
 
         Raises:
             RuntimeError: Raised if the data can't be parsed.
 
         Returns:
-            dict: Site survey status.
+            dict: Site survey status/results, shape depends on `radio`
+                (see above). {"status": "not_started"} if no scan has
+                ever been run on this radio.
         '''
-        res = self._get("tools/site-survey/main")
+        res = self._get(f"tools/site-survey/{radio}")
 
         if res.status_code == 200:
             return res.json()
 
         raise RuntimeError(f"Error fetching site survey status: {res.status_code} {res.text}")
+
+    def trigger_site_survey(self, radio: str = 'main') -> None:
+        '''Start a fresh site survey scan on one radio (POST tools/
+        site-survey/start, {"id": radio}).
+
+        DISRUPTIVE - confirmed live on a Wave-LR (both its 'main' 60GHz
+        radio and its 'backup' 5GHz radio): the device's own UI shows
+        an explicit warning before running this ("Site Survey will
+        temporarily disconnect 60 GHz radio. Link will operate on 5
+        GHz Backup radio."), and a real scan was performed and
+        confirmed disruptive on both radios. Unlike AirOSv8's
+        getsurvey()/UispDevice's own get_site_survey_status() above
+        (both deliberately read-only), this method's entire purpose is
+        to accept that disruption - only call it when that's actually
+        wanted (e.g. an operator-initiated troubleshooting scan), never
+        as part of a routine/automated fleet sweep. Confirmed takes
+        tens of seconds to reach "completed" (poll
+        get_site_survey_status(radio) until status != "scanning").
+
+        Args:
+            radio: 'main' or 'backup' - see get_site_survey_status()'s
+                docstring. Only 'main' exists on a single-radio device.
+
+        Raises:
+            RuntimeError: Raised if the device rejected the request.
+        '''
+        res = self._post("tools/site-survey/start", json_body={'id': radio})
+
+        if res.status_code != 200:
+            raise RuntimeError(f"Error starting site survey: {res.status_code} {res.text}")
 
     def getunms(self) -> dict:
         '''UNMS/UISP cloud connection status (tools/unms).
