@@ -392,3 +392,62 @@ class TestGetWireless:
         assert radio.channel_width_mhz == 40
         assert radio.ssid == 'TEST-BH-5G'
         assert radio.security == 'WPA2'
+
+
+class TestGetSurvey:
+    '''Shares survey.json.cgi byte-for-byte with AirOSv8 (confirmed live
+    via HAR capture, a real GigaBeam LR) - only the default iface name
+    differs ('wlan0' vs AirOSv8's 'ath0').'''
+
+    def test_requests_last_known_results(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/survey.json.cgi',
+            json={
+                'scan_status': 'completed',
+                'scan_data': [{'essid': 'DAN-AP-E', 'hostname': 'DAN-AP-E'}],
+            },
+        )
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        result = dev.getsurvey()
+
+        assert result['scan_data'][0]['essid'] == 'DAN-AP-E'
+        sent = requests_mock.request_history[0]
+        assert sent.qs['iface'] == ['wlan0']
+        assert sent.qs['update'] == ['last']
+
+
+class TestTriggerSurvey:
+    '''Confirmed NON-disruptive live against two real slave/station-mode
+    devices (a GigaBeam LR and an AF60) - confirmed NOT available at all
+    on a master-mode unit (no Site Survey option in the device's own
+    web UI there), so this should only ever be called against a slave.'''
+
+    def test_requests_without_update_param(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/survey.json.cgi',
+            json={'scan_status': 'scanning', 'scan_data': []},
+        )
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.trigger_survey()
+
+        sent = requests_mock.request_history[0]
+        assert sent.qs['iface'] == ['wlan0']
+        assert 'update' not in sent.qs
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.get('https://192.0.2.1/survey.json.cgi', status_code=400, text='bad request')
+        dev = AirFiber('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        try:
+            dev.trigger_survey()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '400' in str(exc)

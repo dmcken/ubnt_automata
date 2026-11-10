@@ -385,6 +385,73 @@ class TestGetWireless:
         assert radios[0].channel_width_mhz is None
 
 
+class TestGetSurvey:
+    def test_requests_last_known_results(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/survey.json.cgi',
+            json={
+                'scan_status': 'completed',
+                'scan_data': [{'essid': 'TEST-AP', 'signal_level': '-50'}],
+            },
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        result = dev.getsurvey()
+
+        assert result['scan_data'][0]['essid'] == 'TEST-AP'
+        sent = requests_mock.request_history[0]
+        assert sent.qs['iface'] == ['ath0']
+        assert sent.qs['update'] == ['last']
+
+    def test_custom_iface(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/survey.json.cgi',
+            json={'scan_status': 'completed', 'scan_data': []},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.getsurvey(iface='wlan0')
+
+        assert requests_mock.request_history[0].qs['iface'] == ['wlan0']
+
+
+class TestTriggerSurvey:
+    '''Confirmed NON-disruptive live against 5 real CPE models (see
+    trigger_survey()'s own docstring) - unlike UispDevice's equivalent,
+    which is confirmed disruptive.'''
+
+    def test_requests_without_update_param(self, requests_mock):
+        requests_mock.get(
+            'https://192.0.2.1/survey.json.cgi',
+            json={'scan_status': 'scanning', 'scan_data': []},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.trigger_survey()
+
+        sent = requests_mock.request_history[0]
+        assert sent.qs['iface'] == ['ath0']
+        assert 'update' not in sent.qs
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.get('https://192.0.2.1/survey.json.cgi', status_code=400, text='bad request')
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = True
+        dev._csrf_id = 'fake-csrf-id'
+
+        try:
+            dev.trigger_survey()
+            raise AssertionError('expected RuntimeError')
+        except RuntimeError as exc:
+            assert '400' in str(exc)
+
+
 class TestStartUpgrade:
     def test_sends_url_and_secure_via_auth_token_not_csrf(self, requests_mock):
         '''Confirmed live: the real request body has no `timeout` key

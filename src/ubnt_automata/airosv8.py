@@ -608,10 +608,12 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
         '''Get the latest wireless site survey results (survey.json.cgi).
 
         Only ever fetches the latest already-known results/status
-        (update=last) - deliberately never triggers a new scan (that's
-        the same request with an empty `update` param instead, observed
-        in a captured HAR - starting one changes the radio's channel-
-        hopping behaviour, out of scope for fetch-only).
+        (update=last) - deliberately never triggers a new scan itself
+        (that's trigger_survey() below, the same request with an empty
+        `update` param instead) - confirmed live this one specifically
+        never changes the radio's channel-hopping behaviour, so always
+        safe to call even where trigger_survey() hasn't been confirmed
+        safe (or is known not to apply, e.g. LTU-family devices).
 
         Args:
             iface (str, optional): Wireless interface to survey.
@@ -632,6 +634,37 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             return res.json()
 
         raise RuntimeError(f"Error fetching site survey data: {res.text}")
+
+    def trigger_survey(self, iface: str = 'ath0') -> None:
+        '''Start a fresh site survey scan (survey.json.cgi, empty
+        `update` param instead of getsurvey()'s 'last' - the same
+        request, confirmed live via a captured HAR of the real web UI).
+
+        Confirmed NON-disruptive live against 5 real CPE models on this
+        device class (LiteBeam 5AC, NanoStation 5AC loco, LiteAP GPS,
+        Rocket 5AC Lite, NanoBeam 5AC) - connection stayed up and
+        signal was unchanged (within normal RF noise) across every one,
+        unlike UispDevice.trigger_site_survey(), which IS disruptive.
+        Not yet confirmed on every model this class covers though (and
+        LTU-family devices - also logged in via this class - were
+        confirmed to NOT support this at all: survey.json.cgi comes
+        back with no scan_status, since LTU's frequency coordination is
+        centrally managed by its AP rather than scanned CPE-side).
+
+        Takes ~15-45s to reach "completed" (poll getsurvey(iface) until
+        scan_status != "scanning").
+
+        Args:
+            iface (str, optional): Wireless interface to survey.
+                Defaults to 'ath0' (this device's only radio).
+
+        Raises:
+            RuntimeError: Raised if the device rejected the request.
+        '''
+        res = self._get("survey.json.cgi", params={'iface': iface})
+
+        if res.status_code != 200:
+            raise RuntimeError(f"Error starting site survey: {res.status_code} {res.text}")
 
     def start_upgrade(self, url: str, secure: bool = False) -> None:
         '''Start a firmware upgrade (/api/v1.0/system/upgrade, POST).

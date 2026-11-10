@@ -535,6 +535,87 @@ class AirFiber(airoscommon.AirOSCommonDevice):
 
         raise RuntimeError(f"Error fetching warnings: {res.status_code} {res.text}")
 
+    def getsurvey(self, iface: str = 'wlan0') -> dict:
+        '''Get the latest wireless site survey results (survey.json.cgi).
+
+        Shares this endpoint and request/response shape byte-for-byte
+        with AirOSv8's own getsurvey() (confirmed live via HAR capture,
+        a real GigaBeam LR) - only the default interface name differs
+        ('wlan0' here vs AirOSv8's 'ath0'). Only ever fetches the
+        latest already-known results/status (update=last) - deliberately
+        never triggers a new scan itself (that's trigger_survey()
+        below).
+
+        NOT a feature of every model in this class though - confirmed
+        live that a real airFiber 5X HD (even configured as a slave/
+        station, the role this would normally be safe/available on -
+        see trigger_survey()'s own docstring) has no Site Survey
+        option in its web UI at all, only AirView (the separate
+        spectrum-analyzer feature, getairview() below) - so this
+        endpoint likely isn't implemented on that hardware regardless
+        of role. Confirmed present (and working) on 60GHz hardware
+        (GigaBeam LR, AF60) specifically - don't assume it's there on
+        a 5GHz airFiber 5X HD without checking first.
+
+        Args:
+            iface (str, optional): Wireless interface to survey.
+                Defaults to 'wlan0' (confirmed on a GigaBeam LR -
+                other AirFiber models may use a different name).
+
+        Raises:
+            RuntimeError: Raised if the data can't be parsed.
+
+        Returns:
+            dict: {"scan_status": ..., "scan_data": [...]} - scan_data
+                is a list of nearby BSSes (cell/mac/mode/frequency/
+                channel/quality/signal_level/noise_level/encryption/
+                essid/hostname/...), empty if no scan has completed
+                yet. Confirmed live this class's scan_data also
+                includes each neighbour's own hostname directly (not
+                confirmed present on AirOSv8's own scan_data).
+        '''
+        res = self._get(f"survey.json.cgi?iface={iface}&update=last")
+
+        if res.status_code == 200:
+            return res.json()
+
+        raise RuntimeError(f"Error fetching site survey data: {res.text}")
+
+    def trigger_survey(self, iface: str = 'wlan0') -> None:
+        '''Start a fresh site survey scan (survey.json.cgi, empty
+        `update` param instead of getsurvey()'s 'last').
+
+        Confirmed NON-disruptive live on two real devices (a GigaBeam
+        LR and an AF60), both 60GHz hardware configured as a slave/
+        station (the role every AirFiber unit in a CPE role would be,
+        vs the master/AP end of a PtP link) - live link traffic was
+        unaffected throughout on both.
+
+        NOT available at all on every model though, regardless of
+        role - confirmed live that master-mode units (an airFiber 5X
+        HD and an AF60-LR) have no Site Survey option in their web UI,
+        AND that a slave-mode airFiber 5X HD ALSO doesn't (only
+        AirView, a different feature - see getsurvey()'s own
+        docstring). So this is confirmed working only on 60GHz
+        hardware (GigaBeam LR, AF60) in slave mode specifically - not
+        "any slave", and not the 5GHz airFiber 5X HD at all so far.
+
+        Takes tens of seconds to reach "completed" (poll getsurvey(
+        iface) until scan_status != "scanning").
+
+        Args:
+            iface (str, optional): Wireless interface to survey.
+                Defaults to 'wlan0' (confirmed on a GigaBeam LR -
+                other AirFiber models may use a different name).
+
+        Raises:
+            RuntimeError: Raised if the device rejected the request.
+        '''
+        res = self._get(f"survey.json.cgi?iface={iface}")
+
+        if res.status_code != 200:
+            raise RuntimeError(f"Error starting site survey: {res.status_code} {res.text}")
+
     def getairview(self) -> dict | None:
         """Get Air View data (airviewdata.cgi).
 
