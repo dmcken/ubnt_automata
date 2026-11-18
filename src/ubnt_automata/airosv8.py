@@ -783,6 +783,33 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 f"({data.get('error_details')!r})"
             )
 
+    def reboot(self) -> None:
+        '''Reboot the device, no firmware change involved (reboot.cgi,
+        POST reboot=yes) - confirmed live via a captured HAR of the
+        real web UI's own "Reboot Device" action against a real
+        LiteAP GPS. Uses the SAME X-CSRF-ID auth as every other .cgi
+        method on this class, same as commit_upgrade() - reuses
+        _post() unchanged.
+
+        Fire-and-forget, same as commit_upgrade() and UispDevice.
+        reboot() - confirming the device actually comes back is left
+        to the caller (confirmed live: ~170s against a real LiteAP
+        GPS, a similar order of magnitude to upgrade_and_wait()'s own
+        reboot wait, not a quick power-cycle).
+
+        Confirmed-good response is {"ok": true, "code": 0} - unlike
+        commit_upgrade(), only status_code is checked here, since no
+        live failure response has been observed yet to know what a
+        rejected reboot even looks like.
+
+        Raises:
+            RuntimeError: Raised if the device rejects the request at
+                the HTTP level (non-200).
+        '''
+        res = self._post("reboot.cgi", data={'reboot': 'yes'})
+        if res.status_code != 200:
+            raise RuntimeError(f"Error rebooting: {res.status_code} {res.text}")
+
     def upgrade_and_wait(
         self, url: str, secure: bool = False,
         poll_interval: float = 1.0, max_wait: float = 300.0,

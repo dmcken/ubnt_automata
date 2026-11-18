@@ -597,6 +597,33 @@ class TestCommitUpgrade:
             dev.commit_upgrade()
 
 
+class TestReboot:
+    def test_sends_reboot_yes_via_csrf(self, requests_mock):
+        '''Confirmed live via a captured HAR of the real web UI's own
+        "Reboot Device" action against a real LiteAP GPS - reboot.cgi
+        uses the SAME X-CSRF-ID auth as every other .cgi method on
+        this class, same as commit_upgrade().'''
+        requests_mock.post('http://192.0.2.1/reboot.cgi', json={'ok': True, 'code': 0})
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.reboot()
+
+        sent = requests_mock.request_history[0]
+        assert 'reboot=yes' in sent.text
+        assert sent.headers['X-CSRF-ID'] == 'fake-csrf-id'
+
+    def test_non_200_raises_runtime_error(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/reboot.cgi', status_code=500, text='error')
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        with pytest.raises(RuntimeError, match='500'):
+            dev.reboot()
+
+
 class TestUpgradeAndWait:
     '''Pure orchestration coverage via monkeypatched start_upgrade()/
     get_upgrade_status()/commit_upgrade() - avoids faking the HTTP/
