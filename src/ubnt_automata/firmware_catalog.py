@@ -77,6 +77,13 @@ CATALOG_BASE_URL = 'https://fw-update.ubnt.com/api/firmware'
 # unconfirmed models.
 CATALOG_IDENTITY = {
     'Wave-Nano': ('wave', 'GMC'),
+    # Confirmed live (HAR of a real Wave AP's own web UI update flow,
+    # via its api/v1.0/tools/proxy/https relay of this exact catalog
+    # query) - a DIFFERENT product code from Wave-Nano, so not assumed
+    # to share it (same caution as LTU-Rocket vs LTU-Lite/LR above).
+    # Wave AP Micro's own identity is unconfirmed - not assumed to be
+    # the same as plain Wave AP.
+    'Wave AP': ('wave', 'MGMP'),
     'GigaBeam LR': ('airmax', 'GBE'),
     # Not independently confirmed via its own catalog entry - inferred
     # from a real GigaBeam Plus reporting the exact same byte-for-byte
