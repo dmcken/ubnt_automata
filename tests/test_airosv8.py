@@ -895,6 +895,122 @@ class TestCheckFirmwareUpdate:
             dev.check_firmware_update()
 
 
+# Trimmed to the fields check_firmware_update() actually reads - the
+# full body (confirmed live, LTU-Rocket) carries more.
+_AIRFIBER_CATALOG_RESPONSE = {
+    '_embedded': {
+        'firmware': [{
+            'version': 'v2.4.2',
+            'file_size': 38918528,
+            'md5': '48a3af405c90779e6f5f6ac1a2077164',
+            'sha256_checksum':
+                '2d2664d77e0c92acd39fa59125fd6b64cac93bad3c86a078967d2a7d6d1ad192',
+            'created': '2026-10-12T12:47:10Z',
+            '_links': {
+                'data': {
+                    'href': 'https://fw-download.ubnt.com/data/aflturocket/13b6-airfiber-2.4.2-851dc8a6.bin',
+                },
+                'changelog': {
+                    'href': 'https://fw-download.ubnt.com/changelog/aflturocket/13b6-airfiber-2.4.2-851dc8a6',
+                },
+            },
+        }],
+    },
+}
+
+
+class TestCheckFirmwareUpdateAirfiber:
+    '''Confirmed live via captured HARs of a real LTU-Rocket's and a
+    real LTU Instant's own web UI update flow: airFiber/LTU hardware's
+    api/fw/update-check needs a `query` field or 400s ("Missing
+    required parameter: query"), and relays firmware_catalog's own
+    modern catalog response verbatim instead of the classic airMAX AC
+    shape - see check_firmware_update()'s own docstring.'''
+
+    def test_sends_platform_product_query_for_known_model(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/api/fw/update-check', json=_AIRFIBER_CATALOG_RESPONSE)
+        requests_mock.get(
+            'http://192.0.2.1/status.cgi',
+            json={'host': {'fwversion': 'v2.3.2'}},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.check_firmware_update(model_name='LTU-Rocket')
+
+        sent = requests_mock.request_history[0].text
+        assert 'query=' in sent
+        assert 'platform~~airfiber' in sent
+        assert 'product~~AFLTUROCKET' in sent
+
+    def test_parses_catalog_shaped_response(self, requests_mock):
+        requests_mock.post('http://192.0.2.1/api/fw/update-check', json=_AIRFIBER_CATALOG_RESPONSE)
+        requests_mock.get(
+            'http://192.0.2.1/status.cgi',
+            json={'host': {'fwversion': 'v2.3.2'}},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        info = dev.check_firmware_update(model_name='LTU-Rocket')
+
+        assert info == FirmwareUpdateInfo(
+            update_available=True, version='v2.4.2',
+            download_url='https://fw-download.ubnt.com/data/aflturocket/13b6-airfiber-2.4.2-851dc8a6.bin',
+            checksum='48a3af405c90779e6f5f6ac1a2077164',
+            changelog_url='https://fw-download.ubnt.com/changelog/aflturocket/13b6-airfiber-2.4.2-851dc8a6',
+        )
+
+    def test_already_latest_reports_no_update(self, requests_mock):
+        '''Unlike the classic airMAX AC shape, this response never
+        says whether it's actually newer - the version comparison
+        against a fresh getstatus() read is what this method adds.'''
+        requests_mock.post('http://192.0.2.1/api/fw/update-check', json=_AIRFIBER_CATALOG_RESPONSE)
+        requests_mock.get(
+            'http://192.0.2.1/status.cgi',
+            json={'host': {'fwversion': 'v2.4.2'}},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        info = dev.check_firmware_update(model_name='LTU-Rocket')
+
+        assert info.update_available is False
+
+    def test_unresolved_model_falls_back_to_classic_shape(self, requests_mock):
+        '''A model not in CATALOG_IDENTITY (or none given) must not
+        send `query` at all - the classic airMAX AC behaviour, which
+        this would otherwise never fall back to once the parameter
+        was introduced.'''
+        requests_mock.post(
+            'http://192.0.2.1/api/fw/update-check',
+            json={'update': False},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        dev.check_firmware_update(model_name='Some Unknown Model')
+
+        sent = requests_mock.request_history[0]
+        assert sent.text is None or 'query=' not in sent.text
+
+    def test_empty_catalog_result_raises_runtime_error(self, requests_mock):
+        requests_mock.post(
+            'http://192.0.2.1/api/fw/update-check',
+            json={'_embedded': {'firmware': []}},
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        with pytest.raises(RuntimeError, match='no releases'):
+            dev.check_firmware_update(model_name='LTU-Rocket')
+
+
 class TestUploadFirmware:
     '''Confirmed live: this is what a real classic airMAX AC device's
     own web UI falls back to after its device-side auto-fetch

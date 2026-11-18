@@ -16,7 +16,7 @@ import requests
 import urllib3
 
 # Local imports
-from . import airoscommon, exceptions, utils
+from . import airoscommon, exceptions, firmware_catalog, utils
 
 logger = logging.getLogger(__name__)
 
@@ -1016,37 +1016,95 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
             f"Device {self._mgmt_ip} did not finish downloading within {max_wait}s"
         )
 
-    def check_firmware_update(self, force: bool = False) -> FirmwareUpdateInfo:
+    def check_firmware_update(
+        self, force: bool = False, model_name: str | None = None,
+    ) -> FirmwareUpdateInfo:
         '''Ask the device itself whether an update is available
-        (api/fw/update-check, POST) - confirmed live this is a classic
-        airMAX AC device's OWN check against Ubiquiti's legacy
-        dl.ubnt.com firmware distribution, a completely different
-        source from firmware_catalog's modern fw-update.ubnt.com API -
-        see FirmwareUpdateInfo's docstring for why that matters.
+        (api/fw/update-check, POST).
+
+        Two completely different shapes confirmed live here depending
+        on hardware family, neither negotiable by any request header -
+        only by whether `model_name` resolves in firmware_catalog.
+        CATALOG_IDENTITY:
+
+        - Classic airMAX AC (model_name omitted/unresolved): a flat
+          {"update": bool, "version", "url", "checksum", "changelog"}
+          against Ubiquiti's legacy dl.ubnt.com distribution - this
+          device's own "update" field already reflects whether it's
+          actually newer, so this is the whole check.
+        - airFiber/LTU (model_name resolved): REQUIRES a `query`
+          POST field (confirmed live: 400 "Missing required
+          parameter: query" without one) of the exact shape
+          firmware_catalog.query_latest() builds, and on success
+          relays that catalog's own response verbatim (confirmed
+          live via captured HARs of a real LTU-Rocket and LTU
+          Instant) - i.e. {"_embedded": {"firmware": [{...}]}}, the
+          same per-release shape firmware_catalog._parse_release()
+          already parses, with NO indication of whether it's actually
+          newer than what's running (unlike the airMAX AC shape) - an
+          extra getstatus() call here compares its own current
+          version against the catalog's to fill in update_available.
 
         Args:
             force: Confirmed live the real web UI sends this (as
                 force=yes) on a manual re-check; unconfirmed what, if
-                anything, it actually changes server-side.
+                anything, it actually changes server-side. Classic
+                airMAX AC only - unconfirmed whether airFiber/LTU
+                hardware's own update-check even looks at it, since
+                every live HAR of that family happened to omit it.
+            model_name: The device's own self-reported model (e.g.
+                getstatus()['host']['devmodel'], or determine_device_
+                type()'s own model_name) - look up CATALOG_IDENTITY to
+                send the airFiber/LTU-shaped request instead of the
+                classic airMAX AC one. A model not in that table is
+                treated the same as omitting this entirely (classic
+                shape, 400s live for airFiber/LTU hardware not yet
+                confirmed and added there - not guessed at).
 
         Raises:
-            RuntimeError: Raised if the data can't be parsed.
+            RuntimeError: Raised if the data can't be parsed, or (only
+                reachable for airFiber/LTU hardware) if the catalog
+                query itself comes back empty.
 
         Returns:
             FirmwareUpdateInfo: What's available, if anything.
         '''
-        data_body = {'force': 'yes'} if force else None
-        res = self._post("api/fw/update-check", data=data_body)
+        data_body = {}
+        if force:
+            data_body['force'] = 'yes'
+        identity = firmware_catalog.CATALOG_IDENTITY.get(model_name) if model_name else None
+        if identity:
+            platform, product = identity
+            data_body['query'] = (
+                f'filter=eq~~platform~~{platform}&filter=eq~~product~~{product}'
+                '&filter=eq~~channel~~release&sort=-version&limit=1'
+            )
+
+        res = self._post("api/fw/update-check", data=data_body or None)
         if res.status_code != 200:
             raise RuntimeError(f"Error checking for firmware update: {res.status_code} {res.text}")
-
         data = res.json()
+
+        if not identity:
+            return FirmwareUpdateInfo(
+                update_available=data.get('update', False),
+                version=data.get('version'),
+                download_url=data.get('url'),
+                checksum=data.get('checksum'),
+                changelog_url=data.get('changelog'),
+            )
+
+        releases = data.get('_embedded', {}).get('firmware', [])
+        if not releases:
+            raise RuntimeError(f"Firmware catalog query returned no releases: {data!r}")
+        release = firmware_catalog._parse_release(releases[0])
+        current_version = self.getstatus().get('host', {}).get('fwversion') or ''
         return FirmwareUpdateInfo(
-            update_available=data.get('update', False),
-            version=data.get('version'),
-            download_url=data.get('url'),
-            checksum=data.get('checksum'),
-            changelog_url=data.get('changelog'),
+            update_available=current_version.lstrip('vV') != release.version.lstrip('vV'),
+            version=release.version,
+            download_url=release.download_url,
+            checksum=release.md5,
+            changelog_url=release.changelog_url,
         )
 
     def upload_firmware(self, data: bytes, filename: str) -> None:

@@ -49,11 +49,13 @@ commit_upgrade() raises exceptions.UpgradeFailed for it: "Firmware
 image check failed. Error code: 99", error_details identifying the
 image as built for chipset "amesoc3" - confirmed separately that's
 what LTU-Lite/LTU-LR actually run, so Rocket is presumably a different
-chipset the same catalog entry simply doesn't cover). CATALOG_IDENTITY
-below only lists LTU-Lite/LTU-LR for that family - Rocket's/Pro's/
-XR's/Instant's real catalog identity (if their firmware is in this
-catalog at all) is unknown, not merely unconfirmed, and must not be
-guessed at from the changelog text alone again.
+chipset the same catalog entry simply doesn't cover). Rocket's own
+catalog identity ("AFLTUROCKET", not "AFLTU") and Instant's (actually
+"AFLTU" after all) are now confirmed live too, each via a captured HAR
+of its own web UI's update flow - see CATALOG_IDENTITY. Pro's/XR's
+real catalog identity (if their firmware is in this catalog at all)
+remains unknown, not merely unconfirmed, and must not be guessed at
+from the changelog text alone.
 '''
 from __future__ import annotations
 
@@ -89,6 +91,19 @@ CATALOG_IDENTITY = {
     # specifically, not just unconfirmed.
     'LTU-Lite': ('airfiber', 'AFLTU'),
     'LTU-LR': ('airfiber', 'AFLTU'),
+    # Confirmed live (HAR of a real LTU Instant's own web UI update
+    # flow): same AFLTU product as LTU-Lite/LR despite being one of
+    # the models the module docstring above says NOT to assume this
+    # for - this one's the exception, confirmed by a successful
+    # upgrade via this exact catalog entry, not inferred from the
+    # shared changelog text.
+    'LTU Instant': ('airfiber', 'AFLTU'),
+    # Confirmed live (HAR of a real LTU-Rocket's own web UI update
+    # flow): a DIFFERENT product code from LTU-Lite/LR/Instant -
+    # resolves the "unknown, not merely unconfirmed" gap this
+    # module's docstring left for Rocket after AFLTU was confirmed
+    # wrong for it (chipset mismatch, see commit_upgrade()).
+    'LTU-Rocket': ('airfiber', 'AFLTUROCKET'),
 }
 
 
