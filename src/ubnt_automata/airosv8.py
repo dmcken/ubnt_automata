@@ -427,14 +427,16 @@ class AirOSv8(airoscommon.AirOSCommonDevice):
                 f"Error decoding json in apply changes: {rez.content}"
             )
 
-    def getcfg(self) -> dict[str,str]:
+    def getcfg(self, redact: bool = False) -> dict[str,str]:
         '''Get the device configuration.
 
-
+        Contains the wireless PSK and SNMP community in plain text -
+        pass redact=True for a copy safe to store (see
+        utils.redact_secrets()). writecfg() needs the unredacted form.
         '''
         rez = self._get("getcfg.cgi")
-
-        return utils.parse_flat_kv_config(rez.text)
+        config = utils.parse_flat_kv_config(rez.text)
+        return utils.redact_secrets(config) if redact else config
 
     def writecfg(
         self, cfgdata: dict[str, str], avoid_fast_restart: bool = False,

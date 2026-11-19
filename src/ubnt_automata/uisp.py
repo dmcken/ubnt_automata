@@ -199,12 +199,15 @@ import requests
 import urllib3
 
 # Local imports
-from . import airoscommon, exceptions
+from . import airoscommon, exceptions, utils
 
 logger = logging.getLogger(__name__)
 
 # Disable the self signed certificate warnings.
 urllib3.disable_warnings()
+
+# The config-bearing routes of the web UI's own settings compose call.
+CONFIG_ROUTES = ('/system/airos/configuration', '/system', '/services', '/system/users')
 
 
 @dataclasses.dataclass
@@ -767,6 +770,45 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         if services is None:
             raise RuntimeError("Error fetching services: no /services entity in compose response")
         return services
+
+    def get_firmware_version(self) -> str:
+        '''This device's own running firmware version (from /device's
+        identification, confirmed live on Wave AP and Wave AP Micro -
+        statistics, public/device and /system don't carry it).
+
+        Raises:
+            RuntimeError: Raised if /device or its firmwareVersion is
+                missing.
+        '''
+        device = self.compose(['/device']).get('/device') or {}
+        version = (device.get('identification') or {}).get('firmwareVersion')
+        if not version:
+            raise RuntimeError(
+                "Error fetching firmware version: no identification.firmwareVersion in /device"
+            )
+        return version
+
+    def get_config(self, redact: bool = False) -> dict[str, dict | list]:
+        '''The device's configuration - the same routes its own web UI
+        loads for its settings pages (confirmed via a Wave AP HAR).
+
+        Args:
+            redact: Mask secrets (see utils.redact_secrets()) - the
+                unredacted form has the wireless passphrase, SNMP
+                community and UISP key in plain text.
+
+        Raises:
+            RuntimeError: Raised if any config route is missing, rather
+                than returning a partial config.
+
+        Returns:
+            dict: route -> body, one entry per CONFIG_ROUTES route.
+        '''
+        config = self.compose(list(CONFIG_ROUTES))
+        missing = [route for route in CONFIG_ROUTES if route not in config]
+        if missing:
+            raise RuntimeError(f"Error fetching config: missing {missing}")
+        return utils.redact_secrets(config) if redact else config
 
     def set_snmp(
         self, enabled: bool, community: str | None = None,

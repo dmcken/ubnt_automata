@@ -30,6 +30,49 @@ class TestParseFlatKvConfig:
         assert utils.parse_flat_kv_config('') == {}
 
 
+class TestRedactSecrets:
+    def test_flat_dotted_keys_match_on_last_segment(self):
+        cfg = {
+            'wpasupplicant.profile.1.network.1.psk': 'fake-psk',
+            'wpasupplicant.profile.1.network.1.key_mgmt.1.name': 'WPA-PSK',
+            'users.1.password': 'x',
+            'snmp.community': 'fake',
+            'radio.1.mode': 'ap-ptmp',
+        }
+        assert utils.redact_secrets(cfg) == {
+            'wpasupplicant.profile.1.network.1.psk': utils.REDACTED,
+            'wpasupplicant.profile.1.network.1.key_mgmt.1.name': 'WPA-PSK',
+            'users.1.password': utils.REDACTED,
+            'snmp.community': utils.REDACTED,
+            'radio.1.mode': 'ap-ptmp',
+        }
+
+    def test_nested_dicts_and_lists(self):
+        cfg = {
+            '/system/airos/configuration': {'wireless': {'interfaces': [
+                {'ssid': 'TEST', 'encryption': {'type': 'wpa2', 'passphrase': 'fake'}},
+            ]}},
+            '/services': {
+                'snmpAgent': {'enabled': True, 'community': 'fake'},
+                'unms': {'key': 'fake-key'},
+                'sshServer': {'passwordAuthentication': True},
+            },
+        }
+        result = utils.redact_secrets(cfg)
+        iface = result['/system/airos/configuration']['wireless']['interfaces'][0]
+        assert iface['ssid'] == 'TEST'
+        assert iface['encryption'] == {'type': 'wpa2', 'passphrase': utils.REDACTED}
+        assert result['/services']['snmpAgent'] == {'enabled': True, 'community': utils.REDACTED}
+        assert result['/services']['unms'] == {'key': utils.REDACTED}
+        assert result['/services']['sshServer'] == {'passwordAuthentication': True}
+
+    def test_empty_values_stay_empty_and_input_is_not_mutated(self):
+        cfg = {'snmp.community': '', 'aaa.1.wpa.psk': 'fake'}
+        result = utils.redact_secrets(cfg)
+        assert result == {'snmp.community': '', 'aaa.1.wpa.psk': utils.REDACTED}
+        assert cfg['aaa.1.wpa.psk'] == 'fake'
+
+
 class TestParseUbntVersionString:
     '''Real behavior for every example already documented in the
     function's own docstring - traced/verified directly (not hand-

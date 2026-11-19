@@ -6,7 +6,9 @@ get_status()'s statistics/peer parsing, and the firmware-upgrade trio
 upgrade_and_wait() wrapper).'''
 import unittest.mock
 
-from ubnt_automata import exceptions, uisp
+import pytest
+
+from ubnt_automata import exceptions, uisp, utils
 from ubnt_automata.uisp import UispDevice, UpgradeStatus
 
 
@@ -232,6 +234,80 @@ class TestCompose:
             raise AssertionError('expected RuntimeError')
         except RuntimeError:
             pass
+
+
+def _authed_device():
+    dev = UispDevice('192.0.2.1')
+    dev._is_ssl = True
+    dev._auth_token = 'fake-token'
+    return dev
+
+
+class TestGetFirmwareVersion:
+    def test_reads_device_identification(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            json={'responses': [{
+                'entity': '/device', 'statusCode': 200,
+                'body': {'identification': {'model': 'Wave-AP-Micro', 'firmwareVersion': '4.1.1'}},
+            }]},
+        )
+        dev = _authed_device()
+
+        assert dev.get_firmware_version() == '4.1.1'
+        sent = requests_mock.last_request.json()['requests']
+        assert sent == [{'method': 'GET', 'route': '/device'}]
+
+    def test_missing_version_raises(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            json={'responses': [
+                {'entity': '/device', 'statusCode': 200, 'body': {'identification': {}}},
+            ]},
+        )
+        with pytest.raises(RuntimeError):
+            _authed_device().get_firmware_version()
+
+
+class TestGetConfig:
+    def _responses(self, routes):
+        bodies = {
+            '/system/airos/configuration': {
+                'wireless': {'interfaces': [{'encryption': {'passphrase': 'fake'}}]},
+            },
+            '/system': {'hostname': 'NUR-WAP-E'},
+            '/services': {'snmpAgent': {'community': 'fake'}},
+            '/system/users': [{'username': 'ubnt', 'readOnly': False, 'sshKeys': []}],
+        }
+        return {'responses': [{'entity': r, 'statusCode': 200, 'body': bodies[r]} for r in routes]}
+
+    COMPOSE_URL = 'https://192.0.2.1/api/v1.0/tools/compose'
+
+    def test_fetches_every_config_route(self, requests_mock):
+        requests_mock.post(self.COMPOSE_URL, json=self._responses(uisp.CONFIG_ROUTES))
+
+        config = _authed_device().get_config()
+
+        assert set(config) == set(uisp.CONFIG_ROUTES)
+        assert config['/services']['snmpAgent']['community'] == 'fake'
+
+    def test_redact(self, requests_mock):
+        requests_mock.post(self.COMPOSE_URL, json=self._responses(uisp.CONFIG_ROUTES))
+
+        config = _authed_device().get_config(redact=True)
+
+        wireless = config['/system/airos/configuration']['wireless']
+        assert wireless['interfaces'][0]['encryption']['passphrase'] == utils.REDACTED
+        assert config['/services']['snmpAgent']['community'] == utils.REDACTED
+        assert config['/system']['hostname'] == 'NUR-WAP-E'
+
+    def test_partial_config_raises(self, requests_mock):
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            json=self._responses(['/system', '/services']),
+        )
+        with pytest.raises(RuntimeError, match='missing'):
+            _authed_device().get_config()
 
 
 class TestGetServices:

@@ -272,6 +272,35 @@ def parse_flat_kv_config(text: str) -> dict[str, str]:
 
     return data
 
+
+# Confirmed live: airOS getcfg (aaa.1.wpa.psk, wpasupplicant...psk,
+# snmp.community, users.1.password) and UISP-firmware config
+# (encryption.passphrase, snmpAgent.community, unms.key).
+SECRET_KEY_NAMES = frozenset({'community', 'key', 'passphrase', 'password', 'psk', 'secret'})
+REDACTED = '<redacted>'
+
+
+def redact_secrets(config):
+    '''Copy of `config` with secret values replaced by REDACTED.
+
+    Handles both nested JSON (UISP-firmware) and flat dotted keys
+    (airOS getcfg) - a key matches on its last dotted segment.
+    Empty values are left empty so "unset" stays distinguishable.
+    '''
+    if isinstance(config, list):
+        return [redact_secrets(v) for v in config]
+    if not isinstance(config, dict):
+        return config
+    result = {}
+    for key, value in config.items():
+        is_secret = str(key).rsplit('.', 1)[-1].lower() in SECRET_KEY_NAMES
+        if is_secret and not isinstance(value, (dict, list)) and value not in ('', None):
+            result[key] = REDACTED
+        else:
+            result[key] = redact_secrets(value)
+    return result
+
+
 def parse_ubnt_version_string(version_string: str):
     '''Parse the full version string to its parts.
 

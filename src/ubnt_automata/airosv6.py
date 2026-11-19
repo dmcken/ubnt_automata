@@ -141,14 +141,18 @@ class AirOSv6(airoscommon.AirOSCommonDevice):
             f"apply_changes() called on {self._mgmt_ip} but is a no-op - not implemented yet"
         )
 
-    def getcfg(self) -> dict[str, str]:
+    def getcfg(self, redact: bool = False) -> dict[str, str]:
         '''Get the device configuration (getcfg.sh).
+
+        Args:
+            redact: Mask secrets (see utils.redact_secrets()).
 
         Returns:
             dict[str,str]: Flat key=value config, same format as AirOSv8.
         '''
         res = self._get('getcfg.sh?.')
-        return utils.parse_flat_kv_config(res.text)
+        config = utils.parse_flat_kv_config(res.text)
+        return utils.redact_secrets(config) if redact else config
 
     def get_boardinfo(self) -> dict[str, str]:
         '''Get static hardware/board info (getboardinfo.sh) -- this is

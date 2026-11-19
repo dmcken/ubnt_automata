@@ -12,7 +12,7 @@ import unittest.mock
 
 import pytest
 
-from ubnt_automata import airoscommon, exceptions
+from ubnt_automata import airoscommon, exceptions, utils
 from ubnt_automata.airosv8 import (
     AirOSv8,
     AirOSv8UpgradeStatus,
@@ -177,6 +177,23 @@ class TestGetcfg:
 
         assert cfg == {'radio.0.mode': 'ap-ptp', 'radio.0.psk': 'fake-psk'}
         assert not any(r.levelname == 'ERROR' for r in caplog.records)
+
+    def test_redact_masks_secrets(self, requests_mock):
+        requests_mock.get(
+            'http://192.0.2.1/getcfg.cgi',
+            text='radio.0.mode=ap-ptp\naaa.1.wpa.psk=fake-psk\nsnmp.community=fake\n',
+        )
+        dev = AirOSv8('192.0.2.1')
+        dev._is_ssl = False
+        dev._csrf_id = 'fake-csrf-id'
+
+        cfg = dev.getcfg(redact=True)
+
+        assert cfg == {
+            'radio.0.mode': 'ap-ptp',
+            'aaa.1.wpa.psk': utils.REDACTED,
+            'snmp.community': utils.REDACTED,
+        }
 
 
 class TestChangePassword:
