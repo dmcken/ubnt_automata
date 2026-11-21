@@ -219,6 +219,24 @@ class TestCompose:
         # The failed sub-request (500) is logged and omitted, not raised.
         assert result == {'/system': {'hostname': 'test'}}
 
+    def test_entityless_responses_map_by_position(self, requests_mock):
+        # EdgePower/EdgeSwitch firmware answers in request order with no
+        # 'entity' key (confirmed live on EP-24V-72W and EP-S16).
+        requests_mock.post(
+            'https://192.0.2.1/api/v1.0/tools/compose',
+            json={'responses': [
+                {'body': {'statusCode': 404}, 'statusCode': 404},
+                {'body': {'hostname': 'ANZ-EP24'}, 'statusCode': 200},
+            ]},
+        )
+        dev = UispDevice('192.0.2.1')
+        dev._is_ssl = True
+        dev._auth_token = 'fake-token'
+
+        result = dev.compose(['/system/airos/configuration', '/system'])
+
+        assert result == {'/system': {'hostname': 'ANZ-EP24'}}
+
     def test_overall_failure_raises(self, requests_mock):
         requests_mock.post(
             'https://192.0.2.1/api/v1.0/tools/compose',
@@ -300,6 +318,44 @@ class TestGetConfig:
         assert wireless['interfaces'][0]['encryption']['passphrase'] == utils.REDACTED
         assert config['/services']['snmpAgent']['community'] == utils.REDACTED
         assert config['/system']['hostname'] == 'NUR-WAP-E'
+
+    def test_wired_hardware_falls_back_to_interfaces(self, requests_mock):
+        # EdgePower: no airOS config entity, entity-less responses.
+        not_supported = {'statusCode': 404, 'body': {'statusCode': 404, 'error': 6}}
+        interfaces = [{
+            'identification': {'id': 'eth1', 'mac': 'b4:fb:e4:4f:28:bc'},
+            'status': {'enabled': True, 'plugged': True, 'currentSpeed': '100-full',
+                       'description': '100 Mbps - Full Duplex', 'speed': 'auto', 'mtu': 1500},
+            'port': {'stp': {'enabled': True, 'state': 'forwarding'}},
+            'ethernet': {'poe': 'off'},
+        }]
+        requests_mock.post(self.COMPOSE_URL, [
+            {'json': {'responses': [
+                not_supported,
+                {'statusCode': 200, 'body': {'hostname': 'ANZ-EP24'}},
+                {'statusCode': 200, 'body': {'snmpAgent': {'community': 'fake'}}},
+                {'statusCode': 200, 'body': [{'username': 'ubnt'}]},
+            ]}},
+            {'json': {'responses': [
+                {'statusCode': 200, 'body': {'hostname': 'ANZ-EP24'}},
+                {'statusCode': 200, 'body': {'snmpAgent': {'community': 'fake'}}},
+                {'statusCode': 200, 'body': [{'username': 'ubnt'}]},
+                {'statusCode': 200, 'body': interfaces},
+            ]}},
+        ])
+
+        config = _authed_device().get_config()
+
+        assert set(config) == set(uisp.WIRED_CONFIG_ROUTES)
+        assert requests_mock.last_request.json()['requests'] == [
+            {'method': 'GET', 'route': r} for r in uisp.WIRED_CONFIG_ROUTES
+        ]
+        iface = config['/interfaces'][0]
+        assert iface['status'] == {'enabled': True, 'speed': 'auto', 'mtu': 1500}
+        assert iface['port']['stp'] == {'enabled': True}
+        assert iface['ethernet'] == {'poe': 'off'}
+        # The source data isn't mutated by the stripping.
+        assert interfaces[0]['status']['plugged'] is True
 
     def test_partial_config_raises(self, requests_mock):
         requests_mock.post(

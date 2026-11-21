@@ -190,6 +190,7 @@ password data (just username/readOnly/sshKeys).
 from __future__ import annotations
 
 # System imports
+import copy
 import dataclasses
 import logging
 import time
@@ -207,7 +208,31 @@ logger = logging.getLogger(__name__)
 urllib3.disable_warnings()
 
 # The config-bearing routes of the web UI's own settings compose call.
-CONFIG_ROUTES = ('/system/airos/configuration', '/system', '/services', '/system/users')
+AIROS_CONFIG_ROUTE = '/system/airos/configuration'
+CONFIG_ROUTES = (AIROS_CONFIG_ROUTE, '/system', '/services', '/system/users')
+# EdgePower / EdgeSwitch (EP-S16) run UISP firmware with no airOS radio,
+# so AIROS_CONFIG_ROUTE 404s ("Entity ... is not supported", confirmed
+# live) -- their per-port config (PoE, VLANs, STP, MTU) is in /interfaces.
+WIRED_CONFIG_ROUTES = ('/system', '/services', '/system/users', '/interfaces')
+# Live link state mixed into /interfaces entries -- dropped from
+# get_config() so a config backup only changes when the config does.
+INTERFACE_RUNTIME_FIELDS = {
+    'status': ('plugged', 'currentSpeed', 'description'),
+    'port.stp': ('state',),
+}
+
+
+def _strip_runtime(interface: dict) -> dict:
+    '''A copy of one /interfaces entry without INTERFACE_RUNTIME_FIELDS.'''
+    interface = copy.deepcopy(interface)
+    for path, fields in INTERFACE_RUNTIME_FIELDS.items():
+        node = interface
+        for key in path.split('.'):
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            for field in fields:
+                node.pop(field, None)
+    return interface
 
 
 @dataclasses.dataclass
@@ -722,12 +747,14 @@ class UispDevice(airoscommon.AirOSCommonDevice):
 
         return res.json().get('responses', [])
 
-    def compose(self, routes: list[str]) -> dict[str, dict]:
+    def compose(self, routes: list[str], optional: tuple[str, ...] = ()) -> dict[str, dict]:
         '''Batch several GET routes into a single request (tools/compose).
 
         Args:
             routes (list[str]): Routes to fetch, e.g. ['/system', '/services'].
                 See the module docstring for the confirmed set.
+            optional: Routes expected to fail on some hardware - their
+                failure is logged at DEBUG instead of ERROR.
 
         Raises:
             RuntimeError: Raised if the overall compose call fails.
@@ -740,13 +767,21 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         responses = self._compose_raw([{'method': 'GET', 'route': r} for r in routes])
 
         result = {}
-        for entry in responses:
-            if 200 <= entry.get('statusCode', 0) < 300:
-                result[entry['entity']] = entry['body']
+        for position, entry in enumerate(responses):
+            # EdgePower/EdgeSwitch firmware omits 'entity' and answers in
+            # request order (confirmed live), so fall back to position.
+            entity = entry.get('entity')
+            if entity is None and len(responses) == len(routes):
+                entity = routes[position]
+            ok = 200 <= entry.get('statusCode', 0) < 300
+            if ok and entity is not None:
+                result[entity] = entry['body']
+            elif ok:
+                logger.error(f"compose sub-request {position} returned no entity; dropped")
             else:
-                logger.error(
-                    f"compose sub-request {entry.get('entity')} failed: "
-                    f"{entry.get('statusCode')}"
+                logger.log(
+                    logging.DEBUG if entity in optional else logging.ERROR,
+                    f"compose sub-request {entity} failed: {entry.get('statusCode')}",
                 )
         return result
 
@@ -792,6 +827,11 @@ class UispDevice(airoscommon.AirOSCommonDevice):
         '''The device's configuration - the same routes its own web UI
         loads for its settings pages (confirmed via a Wave AP HAR).
 
+        Hardware with no airOS radio (EdgePower, EdgeSwitch) has no
+        AIROS_CONFIG_ROUTE, so its config is WIRED_CONFIG_ROUTES instead,
+        with the live link state (INTERFACE_RUNTIME_FIELDS) stripped
+        from /interfaces.
+
         Args:
             redact: Mask secrets (see utils.redact_secrets()) - the
                 unredacted form has the wireless passphrase, SNMP
@@ -802,10 +842,17 @@ class UispDevice(airoscommon.AirOSCommonDevice):
                 than returning a partial config.
 
         Returns:
-            dict: route -> body, one entry per CONFIG_ROUTES route.
+            dict: route -> body, one entry per CONFIG_ROUTES route
+                (or WIRED_CONFIG_ROUTES route, see above).
         '''
-        config = self.compose(list(CONFIG_ROUTES))
-        missing = [route for route in CONFIG_ROUTES if route not in config]
+        routes = CONFIG_ROUTES
+        config = self.compose(list(routes), optional=(AIROS_CONFIG_ROUTE,))
+        if AIROS_CONFIG_ROUTE not in config:
+            routes = WIRED_CONFIG_ROUTES
+            config = self.compose(list(routes))
+            if isinstance(config.get('/interfaces'), list):
+                config['/interfaces'] = [_strip_runtime(i) for i in config['/interfaces']]
+        missing = [route for route in routes if route not in config]
         if missing:
             raise RuntimeError(f"Error fetching config: missing {missing}")
         return utils.redact_secrets(config) if redact else config
