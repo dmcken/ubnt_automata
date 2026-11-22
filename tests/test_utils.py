@@ -173,6 +173,14 @@ class TestDetermineSsl:
         with pytest.raises(exceptions.DeviceUnavailable):
             utils.determine_ssl('192.0.2.1')
 
+    def test_read_timeout_raises_device_unavailable(self, requests_mock):
+        '''The device accepted the TCP connection but didn't answer in time.'''
+        import requests as requests_lib
+        requests_mock.get('http://192.0.2.1/', exc=requests_lib.exceptions.ReadTimeout)
+
+        with pytest.raises(exceptions.DeviceUnavailable):
+            utils.determine_ssl('192.0.2.1')
+
     def test_connection_error_raises_device_unavailable(self, requests_mock):
         '''requests.exceptions.ConnectionError (e.g. "No route to host",
         "Connection refused") is what a real closed/filtered port

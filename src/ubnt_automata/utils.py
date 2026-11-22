@@ -214,7 +214,9 @@ def determine_ssl(management_ip: str) -> bool:
             verify=False,
             timeout=30,
         )
-    except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        # Timeout covers both ConnectTimeout and ReadTimeout (the device
+        # accepted the connection but never answered within 30s).
         # ConnectionError covers what actually reaches this level for a
         # closed/filtered port (e.g. "No route to host", "Connection
         # refused") - requests wraps the underlying urllib3/OSError
