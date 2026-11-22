@@ -225,10 +225,14 @@ def determine_ssl(management_ip: str) -> bool:
     except (urllib3.exceptions.ConnectTimeoutError,
             urllib3.exceptions.HTTPError,
             OSError) as exc:  # OSError covers socket.timeout (== TimeoutError on 3.10+)
-        # 113 - No route to host (Linux)
-        # 10060 - Windows
-        if exc.__class__.__name__ in ['timeout', 'BadStatusLine'] or\
-             exc.errno in [10060, 113]:
+        # Timeouts: socket.timeout is TimeoutError on 3.10+ (its class is
+        # named 'TimeoutError', so the old name == 'timeout' check never
+        # matched), plus urllib3's own ConnectTimeoutError.
+        # errno 113 - No route to host (Linux), 10060 - Windows timeout.
+        # urllib3's exceptions aren't OSErrors and carry no errno at all.
+        if (isinstance(exc, (TimeoutError, urllib3.exceptions.ConnectTimeoutError))
+                or exc.__class__.__name__ == 'BadStatusLine'
+                or getattr(exc, 'errno', None) in (10060, 113)):
             raise exceptions.DeviceUnavailable(
                 f"Unable to reach {management_ip}") from exc
         raise

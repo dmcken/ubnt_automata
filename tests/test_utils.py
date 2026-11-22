@@ -188,6 +188,39 @@ class TestDetermineSsl:
         with pytest.raises(exceptions.DeviceUnavailable):
             utils.determine_ssl('192.0.2.1')
 
+    @pytest.mark.parametrize('exc', [
+        TimeoutError('timed out'),            # socket.timeout on 3.10+
+        OSError(113, 'No route to host'),
+        OSError(10060, 'timed out'),
+    ], ids=['socket-timeout', 'errno-113', 'errno-10060'])
+    def test_raw_timeouts_raise_device_unavailable(self, requests_mock, exc):
+        requests_mock.get('http://192.0.2.1/', exc=exc)
+
+        with pytest.raises(exceptions.DeviceUnavailable):
+            utils.determine_ssl('192.0.2.1')
+
+    def test_urllib3_connect_timeout_raises_device_unavailable(self, requests_mock):
+        import urllib3
+        timeout = urllib3.exceptions.ConnectTimeoutError('timed out')
+        requests_mock.get('http://192.0.2.1/', exc=timeout)
+
+        with pytest.raises(exceptions.DeviceUnavailable):
+            utils.determine_ssl('192.0.2.1')
+
+    def test_other_errors_are_reraised_unchanged(self, requests_mock):
+        '''urllib3 exceptions have no errno - this used to raise
+        AttributeError instead of re-raising the original error.'''
+        import urllib3
+        requests_mock.get('http://192.0.2.1/', exc=urllib3.exceptions.ProtocolError('bad'))
+
+        with pytest.raises(urllib3.exceptions.ProtocolError):
+            utils.determine_ssl('192.0.2.1')
+
+        requests_mock.get('http://192.0.2.1/', exc=OSError(111, 'Connection refused'))
+        with pytest.raises(OSError) as info:
+            utils.determine_ssl('192.0.2.1')
+        assert not isinstance(info.value, exceptions.DeviceUnavailable)
+
 
 class TestDetermineDeviceType:
     def test_airosv8_json_response(self, requests_mock):
