@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
-import socket
 import urllib
 from urllib.parse import urlparse
 
@@ -225,7 +224,7 @@ def determine_ssl(management_ip: str) -> bool:
             f"Unable to reach {management_ip}") from exc
     except (urllib3.exceptions.ConnectTimeoutError,
             urllib3.exceptions.HTTPError,
-            OSError, socket.timeout) as exc:
+            OSError) as exc:  # OSError covers socket.timeout (== TimeoutError on 3.10+)
         # 113 - No route to host (Linux)
         # 10060 - Windows
         if exc.__class__.__name__ in ['timeout', 'BadStatusLine'] or\
